@@ -1,0 +1,6 @@
+RU: API endpoints для режима "Экскурсия по вопросам". Обрабатывает запросы к OpenAI для генерации ответов Кизера на вопросы пользователей.
+
+EN: API endpoints for "Questions tour" mode. Handles requests to OpenAI for generating Kizer's responses to user questions.
+
+
+

@@ -1,0 +1,3 @@
+RU: Серверная обёртка для работы с OpenAI API. Содержит клиент и функции для отправки запросов к ChatGPT (текстовые и с изображениями через Vision API). Все ключи API остаются только на сервере и никогда не попадают в браузер.
+
+EN: Server-side wrapper for OpenAI API. Contains client and functions for sending requests to ChatGPT (text and images via Vision API). All API keys remain server-side only and never reach the browser.

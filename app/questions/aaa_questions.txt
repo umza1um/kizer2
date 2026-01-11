@@ -1,0 +1,5 @@
+RU: Страница режима «Экскурсия по вопросам». Пользователь задаёт вопросы голосом (Web Speech API) или текстом, получает ответы от Кизера с озвучиванием (TTS). История диалога сохраняется в состоянии компонента.
+
+EN: Page for the "Questions tour" mode. User asks questions by voice (Web Speech API) or text, receives responses from Kizer with text-to-speech. Dialog history is stored in component state.
+
+

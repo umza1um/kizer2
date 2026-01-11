@@ -1,0 +1,6 @@
+RU: Страница настроек приложения.
+EN: Application settings page.
+
+
+
+

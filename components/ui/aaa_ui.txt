@@ -1,0 +1,6 @@
+RU: Базовые UI-компоненты (кнопки, контейнеры и т.п.), переиспользуемые по всему приложению.
+EN: Basic reusable UI components (buttons, containers, etc.) used across the app.
+
+
+
+

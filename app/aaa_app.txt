@@ -1,0 +1,6 @@
+RU: Папка с маршрутами (страницами) Next.js в режиме App Router.
+EN: Folder with Next.js routes (pages) using the App Router.
+
+
+
+

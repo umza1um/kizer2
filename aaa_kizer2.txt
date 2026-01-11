@@ -1,0 +1,6 @@
+RU: Корневая папка проекта «Кизер — ИИ-экскурсовод». Здесь находится конфигурация, зависимости и общий код.
+EN: Root folder of the “Kizer — AI tour guide” project. Contains configuration, dependencies and shared code.
+
+
+
+

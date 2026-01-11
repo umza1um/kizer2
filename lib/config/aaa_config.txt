@@ -1,0 +1,6 @@
+RU: Утилиты для работы с конфигурацией промптов. Функции для чтения и записи JSON-файла с промптами и настройками.
+
+EN: Utilities for working with prompts configuration. Functions for reading and writing JSON file with prompts and settings.
+
+
+

@@ -1,0 +1,6 @@
+RU: API endpoints для админки. Позволяют читать и сохранять конфигурацию промптов. В production нужно использовать базу данных или внешнее хранилище вместо файловой системы.
+
+EN: API endpoints for admin panel. Allow reading and saving prompts configuration. In production, should use database or external storage instead of file system.
+
+
+

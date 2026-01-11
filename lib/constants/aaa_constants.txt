@@ -1,0 +1,6 @@
+RU: Константы проекта: роуты, тексты и другие статические значения.
+EN: Project constants: routes, texts and other static values.
+
+
+
+

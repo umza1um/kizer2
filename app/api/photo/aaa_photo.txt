@@ -1,0 +1,6 @@
+RU: API endpoints для режима "Экскурсия по фото". Обрабатывает запросы к OpenAI Vision API для анализа фотографий и генерации ответов Кизера об объектах на изображениях.
+
+EN: API endpoints for "Photo tour" mode. Handles requests to OpenAI Vision API for analyzing photos and generating Kizer's responses about objects in images.
+
+
+

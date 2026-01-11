@@ -1,0 +1,5 @@
+RU: Страница админки для редактирования системных промптов, шаблонов и настроек Кизера. Позволяет редактировать промпты для режимов "Экскурсия по вопросам" и "Экскурсия по фото", а также настройки по умолчанию. Изменения сохраняются в JSON-файл (в production нужна база данных).
+
+EN: Admin page for editing system prompts, templates, and Kizer settings. Allows editing prompts for "Questions tour" and "Photo tour" modes, as well as default settings. Changes are saved to JSON file (database needed in production).
+
+

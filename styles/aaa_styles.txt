@@ -1,0 +1,6 @@
+RU: Папка для глобальных и вспомогательных стилей (если они понадобятся помимо Tailwind).
+EN: Folder for global and helper styles (if needed in addition to Tailwind).
+
+
+
+

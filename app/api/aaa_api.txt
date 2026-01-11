@@ -1,0 +1,6 @@
+RU: API endpoints проекта. Серверные маршруты Next.js для обработки запросов от клиента. Все секретные ключи и работа с внешними API (OpenAI) выполняются только здесь, на сервере.
+
+EN: Project API endpoints. Next.js server routes for handling client requests. All secret keys and work with external APIs (OpenAI) are performed only here, on the server.
+
+
+

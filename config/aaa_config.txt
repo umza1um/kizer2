@@ -1,0 +1,6 @@
+RU: Папка для конфигурационных файлов проекта. Содержит JSON-файлы с промптами для ИИ, шаблонами и настройками по умолчанию. В production эти данные должны храниться в базе данных или внешнем хранилище.
+
+EN: Configuration files directory. Contains JSON files with AI prompts, templates, and default settings. In production, this data should be stored in a database or external storage.
+
+
+

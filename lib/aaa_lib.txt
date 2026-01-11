@@ -1,0 +1,6 @@
+RU: Папка с общими библиотеками и утилитами проекта, не зависящими от UI.
+EN: Folder with shared libraries and utilities for the project, independent from UI.
+
+
+
+

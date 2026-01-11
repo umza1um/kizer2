@@ -1,0 +1,5 @@
+RU: Страница режима «Экскурсия по фото». Пользователь делает или загружает фотографию, получает экскурсию от Кизера через OpenAI Vision API. Поддерживается диалог с контекстом вокруг текущего фото. Изображения оптимизируются на клиенте перед отправкой.
+
+EN: Page for the "Photo tour" mode. User takes or uploads a photo, receives a tour from Kizer via OpenAI Vision API. Dialog with context around the current photo is supported. Images are optimized on the client before sending.
+
+

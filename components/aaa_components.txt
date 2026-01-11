@@ -1,0 +1,6 @@
+RU: Папка с React-компонентами интерфейса приложения.
+EN: Folder with React components for the application UI.
+
+
+
+

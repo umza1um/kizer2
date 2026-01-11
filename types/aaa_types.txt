@@ -1,0 +1,6 @@
+RU: TypeScript определения типов для проекта. Содержит декларации для браузерных API (например, Web Speech API), которые не входят в стандартные типы TypeScript.
+
+EN: TypeScript type definitions for the project. Contains declarations for browser APIs (e.g., Web Speech API) that are not included in standard TypeScript types.
+
+
+
