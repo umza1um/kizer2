@@ -33,9 +33,19 @@ export async function chatCompletion(
     }
 
     return content;
-  } catch (error) {
+  } catch (error: any) {
     console.error("OpenAI API error:", error);
-    throw new Error("Failed to get response from AI");
+    
+    if (error?.status === 401 || error?.code === "invalid_api_key") {
+      throw new Error("Неверный API ключ. Проверьте настройки в .env.local");
+    }
+    
+    if (error?.status === 429) {
+      throw new Error("Превышен лимит запросов. Попробуйте позже");
+    }
+    
+    const errorMessage = error?.message || "Неизвестная ошибка";
+    throw new Error(`Ошибка API: ${errorMessage}`);
   }
 }
 

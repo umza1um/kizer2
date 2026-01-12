@@ -24,12 +24,15 @@ export async function chatCompletionWithVision(
     }
 
     // Текущее сообщение с изображением
+    // Если message пустой, используем пустую строку - системный промпт из админки сделает всю работу
+    const messageText = message.trim() || "";
+    
     const currentUserMessage = {
       role: "user" as const,
       content: [
         {
           type: "text" as const,
-          text: message,
+          text: messageText,
         },
         {
           type: "image_url" as const,
@@ -57,9 +60,19 @@ export async function chatCompletionWithVision(
     }
 
     return content;
-  } catch (error) {
+  } catch (error: any) {
     console.error("OpenAI Vision API error:", error);
-    throw new Error("Failed to get response from AI");
+    
+    if (error?.status === 401 || error?.code === "invalid_api_key") {
+      throw new Error("Неверный API ключ. Проверьте настройки в .env.local");
+    }
+    
+    if (error?.status === 429) {
+      throw new Error("Превышен лимит запросов. Попробуйте позже");
+    }
+    
+    const errorMessage = error?.message || "Неизвестная ошибка";
+    throw new Error(`Ошибка API: ${errorMessage}`);
   }
 }
 

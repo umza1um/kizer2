@@ -14,9 +14,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!message || typeof message !== "string") {
+    // Разрешаем пустое сообщение - системный промпт сделает работу
+    if (typeof message !== "string") {
       return NextResponse.json(
-        { error: "Message is required" },
+        { error: "Message must be a string" },
         { status: 400 },
       );
     }
@@ -40,11 +41,16 @@ export async function POST(request: NextRequest) {
     );
 
     return NextResponse.json({ assistantText });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Photo chat API error:", error);
+    
+    const errorMessage = error?.message || "Failed to process photo chat request";
+    const status = errorMessage.includes("API ключ") ? 401 : 
+                   errorMessage.includes("лимит") ? 429 : 500;
+    
     return NextResponse.json(
-      { error: "Failed to process photo chat request" },
-      { status: 500 },
+      { error: errorMessage },
+      { status },
     );
   }
 }

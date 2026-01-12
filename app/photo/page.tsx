@@ -113,15 +113,18 @@ export default function PhotoPage() {
     if (!file) return;
 
     try {
+      setStatus("ready"); // Убеждаемся, что статус готов
       const optimized = await optimizeImage(file);
       setImageDataUrl(optimized);
       setMessages([]);
       setUserInput("");
       setLastAssistantText("");
+      setStatus("ready"); // Еще раз устанавливаем статус после загрузки
     } catch (error) {
       console.error("Failed to process image:", error);
       const errorMessage = error instanceof Error ? error.message : "Неизвестная ошибка";
       alert(`Не удалось обработать изображение: ${errorMessage}`);
+      setStatus("ready"); // Восстанавливаем статус при ошибке
     }
   };
 
@@ -166,22 +169,36 @@ export default function PhotoPage() {
   };
 
   const handleSendMessage = async (text: string) => {
-    if (!text.trim() || !imageDataUrl) return;
+    if (!imageDataUrl) {
+      console.warn("Cannot send message: image missing");
+      return;
+    }
 
-    const userMessage: Message = { role: "user", content: text };
-    const newMessages = [...messages, userMessage].slice(-10);
-    setMessages(newMessages);
+    // Если текста нет, отправляем пустую строку - системный промпт из админки сделает работу
+    const messageText = text.trim() || "";
+    
+    // Добавляем сообщение пользователя в историю только если есть текст
+    const userMessage: Message | null = messageText ? { role: "user", content: messageText } : null;
+    const newMessages = userMessage 
+      ? [...messages, userMessage].slice(-10)
+      : messages;
+    
+    if (userMessage) {
+      setMessages(newMessages);
+    }
     setStatus("thinking");
     setUserInput("");
 
     try {
+      console.log("Sending photo chat request...", { message: messageText || "(empty, using system prompt)", imageSize: imageDataUrl.length });
+      
       const response = await fetch("/api/photo/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           imageDataUrl,
-          message: text,
-          messages: newMessages.slice(0, -1),
+          message: messageText,
+          messages: newMessages,
           settings: {
             tone: "balanced",
             audience: "adult",
@@ -189,30 +206,41 @@ export default function PhotoPage() {
         }),
       });
 
+      console.log("Response status:", response.status);
+
       if (!response.ok) {
-        throw new Error("Failed to get response");
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = errorData.error || `Ошибка ${response.status}: ${response.statusText}`;
+        console.error("API error:", errorMessage);
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
+      console.log("Response data:", data);
+      
       const assistantText = data.assistantText || "Извините, не удалось получить ответ.";
 
       const assistantMessage: Message = { role: "assistant", content: assistantText };
-      setMessages([...newMessages, assistantMessage].slice(-12));
+      const updatedMessages = [...newMessages, assistantMessage].slice(-12);
+      setMessages(updatedMessages);
       setLastAssistantText(assistantText);
+      setStatus("ready");
 
       if (hasSpeechSynthesis) {
-        speakText(assistantText);
+        setTimeout(() => {
+          speakText(assistantText);
+        }, 300);
       }
-
-      setStatus("ready");
     } catch (error) {
       console.error("Chat error:", error);
       setStatus("ready");
+      const errorText = error instanceof Error ? error.message : "Произошла ошибка. Попробуйте ещё раз.";
       const errorMessage: Message = {
         role: "assistant",
-        content: "Произошла ошибка. Попробуйте ещё раз.",
+        content: errorText,
       };
       setMessages([...newMessages, errorMessage].slice(-12));
+      setLastAssistantText("");
     }
   };
 
@@ -221,9 +249,10 @@ export default function PhotoPage() {
     handleSendMessage(userInput);
   };
 
-  const handleRepeat = () => {
-    if (lastAssistantText) {
-      speakText(lastAssistantText);
+  const handleRepeat = (text?: string) => {
+    const textToSpeak = text || lastAssistantText;
+    if (textToSpeak) {
+      speakText(textToSpeak);
     }
   };
 
@@ -297,29 +326,24 @@ export default function PhotoPage() {
                   : "bg-slate-900 text-white"
               }`}
             >
-              <p className="text-xs">{msg.content}</p>
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-xs flex-1">{msg.content}</p>
+                {msg.role === "assistant" && hasSpeechSynthesis && (
+                  <button
+                    onClick={() => handleRepeat(msg.content)}
+                    className="text-sm hover:opacity-70 transition flex-shrink-0"
+                    title="Озвучить"
+                    disabled={status === "thinking"}
+                  >
+                    🔊
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>
       )}
 
-      {lastAssistantText && messages.length === 0 && (
-        <div className="mb-4 rounded-2xl bg-slate-900 px-4 py-3 text-white">
-          <div className="flex items-start justify-between mb-1">
-            <p className="text-xs font-medium text-slate-300">Ответ Кизера:</p>
-            {hasSpeechSynthesis && (
-              <button
-                onClick={handleRepeat}
-                className="text-lg hover:opacity-70 transition"
-                title="Повторить"
-              >
-                🔊
-              </button>
-            )}
-          </div>
-          <p className="text-sm">{lastAssistantText}</p>
-        </div>
-      )}
 
       {imageDataUrl && (
         <form onSubmit={handleTextSubmit} className="mt-auto space-y-2">
@@ -333,7 +357,7 @@ export default function PhotoPage() {
           />
           <button
             type="submit"
-            disabled={!userInput.trim() || status !== "ready"}
+            disabled={status !== "ready"}
             className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-800"
           >
             Спросить Кизера

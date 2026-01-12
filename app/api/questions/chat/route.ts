@@ -37,11 +37,16 @@ export async function POST(request: NextRequest) {
     const assistantText = await chatCompletion(chatMessages, systemPrompt);
 
     return NextResponse.json({ assistantText });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Chat API error:", error);
+    
+    const errorMessage = error?.message || "Failed to process chat request";
+    const status = errorMessage.includes("API ключ") ? 401 : 
+                   errorMessage.includes("лимит") ? 429 : 500;
+    
     return NextResponse.json(
-      { error: "Failed to process chat request" },
-      { status: 500 },
+      { error: errorMessage },
+      { status },
     );
   }
 }

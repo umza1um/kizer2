@@ -56,6 +56,7 @@ export default function QuestionsPage() {
       };
     }
 
+    // Инициализация синтеза речи
     if (hasSpeechSynthesis) {
       synthesisRef.current = window.speechSynthesis;
     }
@@ -64,20 +65,41 @@ export default function QuestionsPage() {
       if (recognitionRef.current) {
         recognitionRef.current.stop();
       }
-      if (synthesisRef.current) {
-        synthesisRef.current.cancel();
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
       }
     };
-  }, [hasSpeechRecognition, hasSpeechSynthesis, status]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasSpeechRecognition, hasSpeechSynthesis]);
+
+  const stopSpeaking = () => {
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      setStatus("ready");
+    }
+  };
 
   const speakText = (text: string) => {
-    if (!hasSpeechSynthesis || !synthesisRef.current) return;
+    if (!hasSpeechSynthesis) {
+      console.warn("Speech synthesis is not available");
+      return;
+    }
 
-    synthesisRef.current.cancel();
+    const synth = window.speechSynthesis;
+    if (!synth) {
+      console.warn("Speech synthesis API not found");
+      return;
+    }
+
+    // Отменяем все предыдущие речи
+    synth.cancel();
+
+    // Создаем utterance
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "ru-RU";
     utterance.rate = 0.9;
     utterance.pitch = 1;
+    utterance.volume = 1;
 
     utterance.onstart = () => {
       setStatus("speaking");
@@ -87,21 +109,63 @@ export default function QuestionsPage() {
       setStatus("ready");
     };
 
-    utterance.onerror = () => {
+    utterance.onerror = (event) => {
+      console.error("Speech synthesis error:", event);
       setStatus("ready");
     };
 
-    synthesisRef.current.speak(utterance);
+    // Небольшая задержка для надежности на некоторых браузерах
+    try {
+      synth.speak(utterance);
+    } catch (error) {
+      console.error("Failed to speak:", error);
+      // Пробуем с небольшой задержкой
+      setTimeout(() => {
+        try {
+          synth.speak(utterance);
+        } catch (retryError) {
+          console.error("Failed to speak after retry:", retryError);
+          setStatus("ready");
+        }
+      }, 100);
+    }
   };
 
   const handleStartListening = () => {
-    if (!recognitionRef.current) return;
-    try {
-      recognitionRef.current.start();
-    } catch (error) {
-      console.error("Failed to start recognition:", error);
-      setStatus("ready");
+    const currentStatus = status;
+    
+    // Если Кизер говорит - останавливаем речь
+    if (currentStatus === "speaking") {
+      stopSpeaking();
     }
+
+    // Если уже слушаем - останавливаем
+    if (currentStatus === "listening" && recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (error) {
+        // Игнорируем ошибки при остановке
+      }
+      return;
+    }
+
+    // Небольшая задержка перед началом распознавания, чтобы речь успела остановиться
+    const delay = currentStatus === "speaking" ? 200 : 0;
+    
+    setTimeout(() => {
+      if (!recognitionRef.current) return;
+
+      try {
+        recognitionRef.current.start();
+      } catch (error: any) {
+        // Если ошибка "already started" - игнорируем
+        if (error?.message?.includes("already started") || error?.message?.includes("started")) {
+          return;
+        }
+        console.error("Failed to start recognition:", error);
+        setStatus("ready");
+      }
+    }, delay);
   };
 
   const handleSendMessage = async (text: string) => {
@@ -128,7 +192,9 @@ export default function QuestionsPage() {
       });
 
       if (!response.ok) {
-        throw new Error("Failed to get response");
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = errorData.error || `Ошибка ${response.status}: ${response.statusText}`;
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
@@ -137,18 +203,21 @@ export default function QuestionsPage() {
       const assistantMessage: Message = { role: "assistant", content: assistantText };
       setMessages([...newMessages, assistantMessage].slice(-12));
       setLastAssistantText(assistantText);
+      setStatus("ready");
 
+      // Автоматически озвучиваем ответ после небольшой задержки
       if (hasSpeechSynthesis) {
-        speakText(assistantText);
-      } else {
-        setStatus("ready");
+        setTimeout(() => {
+          speakText(assistantText);
+        }, 300);
       }
     } catch (error) {
       console.error("Chat error:", error);
       setStatus("ready");
+      const errorText = error instanceof Error ? error.message : "Произошла ошибка. Попробуйте ещё раз.";
       const errorMessage: Message = {
         role: "assistant",
-        content: "Произошла ошибка. Попробуйте ещё раз.",
+        content: errorText,
       };
       setMessages([...newMessages, errorMessage].slice(-12));
     }
@@ -159,9 +228,10 @@ export default function QuestionsPage() {
     handleSendMessage(userInput);
   };
 
-  const handleRepeat = () => {
-    if (lastAssistantText) {
-      speakText(lastAssistantText);
+  const handleRepeat = (text?: string) => {
+    const textToSpeak = text || lastAssistantText;
+    if (textToSpeak) {
+      speakText(textToSpeak);
     }
   };
 
@@ -202,8 +272,15 @@ export default function QuestionsPage() {
         <div className="mb-6 flex justify-center">
           <button
             onClick={handleStartListening}
-            disabled={status !== "ready"}
-            className="flex h-20 w-20 items-center justify-center rounded-full bg-slate-900 text-3xl shadow-lg transition active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-800"
+            disabled={status === "thinking"}
+            className={`flex h-20 w-20 items-center justify-center rounded-full text-3xl shadow-lg transition active:scale-95 hover:bg-slate-800 ${
+              status === "speaking" 
+                ? "bg-red-600 hover:bg-red-700" 
+                : status === "listening"
+                ? "bg-blue-600 hover:bg-blue-700"
+                : "bg-slate-900"
+            } ${status === "thinking" ? "opacity-50 cursor-not-allowed" : ""}`}
+            title={status === "speaking" ? "Прервать и начать слушать" : status === "listening" ? "Остановить прослушивание" : "Начать говорить"}
           >
             🎤
           </button>
@@ -217,15 +294,16 @@ export default function QuestionsPage() {
         </div>
       )}
 
-      {lastAssistantText && (
+      {lastAssistantText && messages.length === 0 && (
         <div className="mb-4 rounded-2xl bg-slate-900 px-4 py-3 text-white">
           <div className="flex items-start justify-between mb-1">
             <p className="text-xs font-medium text-slate-300">Ответ Кизера:</p>
             {hasSpeechSynthesis && (
               <button
-                onClick={handleRepeat}
+                onClick={() => handleRepeat()}
                 className="text-lg hover:opacity-70 transition"
                 title="Повторить"
+                disabled={status === "speaking"}
               >
                 🔊
               </button>
@@ -243,10 +321,22 @@ export default function QuestionsPage() {
               className={`rounded-2xl px-3 py-2 ${
                 msg.role === "user"
                   ? "bg-slate-50 text-slate-900 ml-auto text-right"
-                  : "bg-slate-100 text-slate-700"
+                  : "bg-slate-900 text-white"
               }`}
             >
-              <p className="text-xs">{msg.content}</p>
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-xs flex-1">{msg.content}</p>
+                {msg.role === "assistant" && hasSpeechSynthesis && (
+                  <button
+                    onClick={() => handleRepeat(msg.content)}
+                    className="text-sm hover:opacity-70 transition flex-shrink-0"
+                    title="Озвучить"
+                    disabled={status === "speaking"}
+                  >
+                    🔊
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>

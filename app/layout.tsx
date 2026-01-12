@@ -13,7 +13,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ru">
-      <body className="min-h-screen bg-slate-100 text-slate-900 antialiased">
+      <body className="min-h-screen bg-slate-100 text-slate-900 antialiased" suppressHydrationWarning>
         <div className="flex min-h-screen items-center justify-center px-4 py-6">
           {children}
         </div>
