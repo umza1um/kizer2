@@ -183,7 +183,7 @@ export default function PhotoPage() {
     const voices = synthesisRef.current.getVoices();
     if (voices.length > 0) {
       const russianVoice = voices.find(
-        (v) => v.lang.startsWith("ru") && (v.name.includes("женск") || v.name.includes("Female") || v.gender === "female")
+        (v) => v.lang.startsWith("ru") && (v.name.includes("женск") || v.name.includes("Female"))
       ) || voices.find((v) => v.lang.startsWith("ru"));
       
       if (russianVoice) {

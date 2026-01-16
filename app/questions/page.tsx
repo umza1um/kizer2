@@ -153,7 +153,7 @@ export default function QuestionsPage() {
     if (voices.length > 0) {
       // Ищем русский женский голос или просто русский
       const russianVoice = voices.find(
-        (v) => v.lang.startsWith("ru") && (v.name.includes("женск") || v.name.includes("Female") || v.gender === "female")
+        (v) => v.lang.startsWith("ru") && (v.name.includes("женск") || v.name.includes("Female"))
       ) || voices.find((v) => v.lang.startsWith("ru"));
       
       if (russianVoice) {
@@ -181,7 +181,7 @@ export default function QuestionsPage() {
         const voices = synth.getVoices();
         if (voices.length > 0 && !utterance.voice) {
           const russianVoice = voices.find(
-            (v) => v.lang.startsWith("ru") && (v.name.includes("женск") || v.name.includes("Female") || v.gender === "female")
+            (v) => v.lang.startsWith("ru") && (v.name.includes("женск") || v.name.includes("Female"))
           ) || voices.find((v) => v.lang.startsWith("ru"));
           
           if (russianVoice) {
