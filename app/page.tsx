@@ -8,7 +8,7 @@ export default function Home() {
       <header className="flex flex-col items-center gap-1 text-center">
         <h1 className="text-[28px] font-semibold tracking-[0.18em] text-slate-900">
           КИЗЕР
-        </h1>
+          </h1>
         <p className="text-xs tracking-[0.26em] text-slate-500">
           ИИ ЭКСКУРСОВОД
         </p>
@@ -74,13 +74,13 @@ export default function Home() {
               type="button"
               fullWidth
               className="bg-slate-900 text-slate-50 hover:bg-slate-800"
-            >
+          >
               админка
             </Button>
           </Link>
         </nav>
-      </div>
-    </main>
+        </div>
+      </main>
   );
 }
 

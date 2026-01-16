@@ -20,12 +20,22 @@ export default function QuestionsPage() {
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const synthesisRef = useRef<SpeechSynthesis | null>(null);
-  const hasSpeechRecognition = typeof window !== "undefined" && ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
-  const hasSpeechSynthesis = typeof window !== "undefined" && "speechSynthesis" in window;
+  const [hasSpeechRecognition, setHasSpeechRecognition] = useState(false);
+  const [hasSpeechSynthesis, setHasSpeechSynthesis] = useState(false);
 
   useEffect(() => {
-    if (hasSpeechRecognition) {
-      const SpeechRecognition = window.SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const speechRecognitionAvailable =
+      typeof window !== "undefined" &&
+      ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
+    const speechSynthesisAvailable =
+      typeof window !== "undefined" && "speechSynthesis" in window;
+
+    setHasSpeechRecognition(speechRecognitionAvailable);
+    setHasSpeechSynthesis(speechSynthesisAvailable);
+
+    if (speechRecognitionAvailable) {
+      const SpeechRecognition =
+        window.SpeechRecognition || (window as any).webkitSpeechRecognition;
       recognitionRef.current = new SpeechRecognition();
       recognitionRef.current.continuous = false;
       recognitionRef.current.interimResults = false;
@@ -57,7 +67,7 @@ export default function QuestionsPage() {
     }
 
     // Инициализация синтеза речи
-    if (hasSpeechSynthesis) {
+    if (speechSynthesisAvailable) {
       synthesisRef.current = window.speechSynthesis;
     }
 
@@ -70,13 +80,40 @@ export default function QuestionsPage() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasSpeechRecognition, hasSpeechSynthesis]);
+  }, []);
 
   const stopSpeaking = () => {
     if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
       setStatus("ready");
     }
+  };
+
+  const cleanTextForSpeech = (text: string): string => {
+    let cleaned = text;
+
+    // Убираем блок "Источники:" и всё после него
+    const sourcesIndex = cleaned.indexOf("\n\nИсточники:");
+    if (sourcesIndex !== -1) {
+      cleaned = cleaned.substring(0, sourcesIndex);
+    }
+
+    // Убираем URL-ссылки (http://, https://)
+    cleaned = cleaned.replace(/https?:\/\/[^\s]+/gi, "");
+
+    // Убираем специальные символы для озвучивания
+    cleaned = cleaned
+      .replace(/\*/g, "") // звездочки
+      .replace(/#/g, "") // хэштеги
+      .replace(/_{2,}/g, "") // подчеркивания (двойные и более)
+      .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1") // markdown ссылки [текст](url) -> текст
+      .replace(/<[^>]+>/g, "") // HTML теги
+      .trim();
+
+    // Убираем множественные пробелы и переносы строк
+    cleaned = cleaned.replace(/\n{3,}/g, "\n\n").replace(/[ \t]+/g, " ");
+
+    return cleaned;
   };
 
   const speakText = (text: string) => {
@@ -94,12 +131,35 @@ export default function QuestionsPage() {
     // Отменяем все предыдущие речи
     synth.cancel();
 
+    // Очищаем текст для озвучивания
+    const cleanedText = cleanTextForSpeech(text);
+
+    // Если после очистки текст пустой, не озвучиваем
+    if (!cleanedText.trim()) {
+      return;
+    }
+
     // Создаем utterance
-    const utterance = new SpeechSynthesisUtterance(text);
+    const utterance = new SpeechSynthesisUtterance(cleanedText);
     utterance.lang = "ru-RU";
-    utterance.rate = 0.9;
-    utterance.pitch = 1;
-    utterance.volume = 1;
+    
+    // Настройки для более приятного голоса
+    utterance.rate = 0.85; // Немного медленнее для естественности
+    utterance.pitch = 1.15; // Чуть выше для более нежного звука
+    utterance.volume = 0.95; // Немного тише для комфорта
+    
+    // Пытаемся выбрать более приятный голос (женский, если доступен)
+    const voices = synth.getVoices();
+    if (voices.length > 0) {
+      // Ищем русский женский голос или просто русский
+      const russianVoice = voices.find(
+        (v) => v.lang.startsWith("ru") && (v.name.includes("женск") || v.name.includes("Female") || v.gender === "female")
+      ) || voices.find((v) => v.lang.startsWith("ru"));
+      
+      if (russianVoice) {
+        utterance.voice = russianVoice;
+      }
+    }
 
     utterance.onstart = () => {
       setStatus("speaking");
@@ -114,20 +174,34 @@ export default function QuestionsPage() {
       setStatus("ready");
     };
 
-    // Небольшая задержка для надежности на некоторых браузерах
-    try {
-      synth.speak(utterance);
-    } catch (error) {
-      console.error("Failed to speak:", error);
-      // Пробуем с небольшой задержкой
-      setTimeout(() => {
-        try {
-          synth.speak(utterance);
-        } catch (retryError) {
-          console.error("Failed to speak after retry:", retryError);
-          setStatus("ready");
+    // Небольшая задержка для надежности и загрузки голосов
+    const trySpeak = () => {
+      try {
+        // Обновляем список голосов (может понадобиться при первом вызове)
+        const voices = synth.getVoices();
+        if (voices.length > 0 && !utterance.voice) {
+          const russianVoice = voices.find(
+            (v) => v.lang.startsWith("ru") && (v.name.includes("женск") || v.name.includes("Female") || v.gender === "female")
+          ) || voices.find((v) => v.lang.startsWith("ru"));
+          
+          if (russianVoice) {
+            utterance.voice = russianVoice;
+          }
         }
-      }, 100);
+        
+        synth.speak(utterance);
+      } catch (error) {
+        console.error("Failed to speak:", error);
+        setStatus("ready");
+      }
+    };
+
+    // Если голоса еще не загружены, ждем немного
+    if (synth.getVoices().length === 0) {
+      synth.addEventListener("voiceschanged", trySpeak, { once: true });
+      setTimeout(trySpeak, 100);
+    } else {
+      trySpeak();
     }
   };
 

@@ -156,10 +156,40 @@ export default function PhotoPage() {
     if (!hasSpeechSynthesis || !synthesisRef.current) return;
 
     synthesisRef.current.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
+    
+    // Очищаем текст от ссылок и символов
+    let cleanedText = text;
+    const sourcesIndex = cleanedText.indexOf("\n\nИсточники:");
+    if (sourcesIndex !== -1) {
+      cleanedText = cleanedText.substring(0, sourcesIndex);
+    }
+    cleanedText = cleanedText
+      .replace(/\*/g, "")
+      .replace(/https?:\/\/[^\s]+/gi, "")
+      .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1")
+      .trim();
+    
+    if (!cleanedText) return;
+    
+    const utterance = new SpeechSynthesisUtterance(cleanedText);
     utterance.lang = "ru-RU";
-    utterance.rate = 0.9;
-    utterance.pitch = 1;
+    
+    // Настройки для более приятного голоса
+    utterance.rate = 0.85;
+    utterance.pitch = 1.15;
+    utterance.volume = 0.95;
+    
+    // Пытаемся выбрать более приятный голос
+    const voices = synthesisRef.current.getVoices();
+    if (voices.length > 0) {
+      const russianVoice = voices.find(
+        (v) => v.lang.startsWith("ru") && (v.name.includes("женск") || v.name.includes("Female") || v.gender === "female")
+      ) || voices.find((v) => v.lang.startsWith("ru"));
+      
+      if (russianVoice) {
+        utterance.voice = russianVoice;
+      }
+    }
 
     utterance.onerror = () => {
       // Ignore errors silently
