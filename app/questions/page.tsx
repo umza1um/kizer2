@@ -48,7 +48,22 @@ export default function QuestionsPage() {
       recognitionRef.current.onresult = (event: SpeechRecognitionEvent) => {
         const transcript = event.results[0][0].transcript;
         setLastUserSpeech(transcript);
-        handleSendMessage(transcript);
+        // #region agent log
+        fetch("http://127.0.0.1:7242/ingest/aad8802b-3ba8-4d89-b8af-bc22d092c560", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "898114" },
+          body: JSON.stringify({
+            sessionId: "898114",
+            runId: "pre-fix",
+            hypothesisId: "H1",
+            location: "questions/page.tsx:onresult",
+            message: "recognition path",
+            data: { transcriptLen: transcript?.length ?? 0 },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {});
+        // #endregion
+        handleSendMessage(transcript, "voice");
       };
 
       recognitionRef.current.onerror = (event: any) => {
@@ -117,6 +132,27 @@ export default function QuestionsPage() {
   };
 
   const speakText = (text: string) => {
+    const runtimeSynthOk =
+      typeof window !== "undefined" && "speechSynthesis" in window && !!window.speechSynthesis;
+    // #region agent log
+    fetch("http://127.0.0.1:7242/ingest/aad8802b-3ba8-4d89-b8af-bc22d092c560", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "898114" },
+      body: JSON.stringify({
+        sessionId: "898114",
+        runId: "pre-fix",
+        hypothesisId: "H1",
+        location: "questions/page.tsx:speakText:entry",
+        message: "speakText entry",
+        data: {
+          closureHasSynth: hasSpeechSynthesis,
+          runtimeSynthOk,
+          textLen: text?.length ?? 0,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     if (!hasSpeechSynthesis) {
       console.warn("Speech synthesis is not available");
       return;
@@ -136,6 +172,21 @@ export default function QuestionsPage() {
 
     // Если после очистки текст пустой, не озвучиваем
     if (!cleanedText.trim()) {
+      // #region agent log
+      fetch("http://127.0.0.1:7242/ingest/aad8802b-3ba8-4d89-b8af-bc22d092c560", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "898114" },
+        body: JSON.stringify({
+          sessionId: "898114",
+          runId: "pre-fix",
+          hypothesisId: "H2",
+          location: "questions/page.tsx:speakText:emptyCleaned",
+          message: "skip empty cleaned text",
+          data: { rawLen: text?.length ?? 0 },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       return;
     }
 
@@ -170,6 +221,21 @@ export default function QuestionsPage() {
     };
 
     utterance.onerror = (event) => {
+      // #region agent log
+      fetch("http://127.0.0.1:7242/ingest/aad8802b-3ba8-4d89-b8af-bc22d092c560", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "898114" },
+        body: JSON.stringify({
+          sessionId: "898114",
+          runId: "pre-fix",
+          hypothesisId: "H3",
+          location: "questions/page.tsx:utterance.onerror",
+          message: "synthesis error",
+          data: { error: String((event as SpeechSynthesisErrorEvent)?.error ?? "unknown") },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       console.error("Speech synthesis error:", event);
       setStatus("ready");
     };
@@ -242,7 +308,7 @@ export default function QuestionsPage() {
     }, delay);
   };
 
-  const handleSendMessage = async (text: string) => {
+  const handleSendMessage = async (text: string, source: "text" | "voice" = "text") => {
     if (!text.trim()) return;
 
     const userMessage: Message = { role: "user", content: text };
@@ -279,6 +345,30 @@ export default function QuestionsPage() {
       setLastAssistantText(assistantText);
       setStatus("ready");
 
+      const runtimeSynthOk =
+        typeof window !== "undefined" && "speechSynthesis" in window && !!window.speechSynthesis;
+      // #region agent log
+      fetch("http://127.0.0.1:7242/ingest/aad8802b-3ba8-4d89-b8af-bc22d092c560", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "898114" },
+        body: JSON.stringify({
+          sessionId: "898114",
+          runId: "pre-fix",
+          hypothesisId: "H1",
+          location: "questions/page.tsx:handleSendMessage:afterChat",
+          message: "tts scheduling decision",
+          data: {
+            source,
+            closureHasSynth: hasSpeechSynthesis,
+            runtimeSynthOk,
+            willScheduleTts: hasSpeechSynthesis,
+            assistantLen: assistantText?.length ?? 0,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+
       // Автоматически озвучиваем ответ после небольшой задержки
       if (hasSpeechSynthesis) {
         setTimeout(() => {
@@ -299,7 +389,7 @@ export default function QuestionsPage() {
 
   const handleTextSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    handleSendMessage(userInput);
+    handleSendMessage(userInput, "text");
   };
 
   const handleRepeat = (text?: string) => {

@@ -11,6 +11,10 @@ type PromptsConfig = {
   };
   photo: {
     systemPrompt: string;
+    identifyPrompt: string;
+    resolvePrompt: string;
+    tourPrompt: string;
+    followupPrompt: string;
   };
   settings: {
     defaultTone: "scientific" | "balanced" | "entertainment";
@@ -21,6 +25,8 @@ type PromptsConfig = {
 export default function AdminPage() {
   const [config, setConfig] = useState<PromptsConfig | null>(null);
   const [apiKeyStatus, setApiKeyStatus] = useState<"configured" | "not configured">("not configured");
+  const [searchProvider, setSearchProvider] = useState<string>("serpapi");
+  const [searchKeyStatus, setSearchKeyStatus] = useState<"configured" | "not configured">("not configured");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -37,6 +43,8 @@ export default function AdminPage() {
       const data = await response.json();
       setConfig(data.config);
       setApiKeyStatus(data.apiKeyStatus);
+      setSearchProvider(data.searchProvider ?? "serpapi");
+      setSearchKeyStatus(data.searchKeyStatus ?? "not configured");
     } catch (error) {
       console.error("Failed to load config:", error);
       setMessage({ type: "error", text: "Не удалось загрузить конфигурацию" });
@@ -134,6 +142,15 @@ export default function AdminPage() {
         <p className="text-xs text-slate-500 mb-3">
           Ключ задаётся вручную в .env.local
         </p>
+        <p className="text-sm text-slate-600 mb-2">
+          Search: <span className="font-medium">{searchProvider}</span> —{" "}
+          <span className={searchKeyStatus === "configured" ? "text-green-600" : "text-amber-600"}>
+            {searchKeyStatus === "configured" ? "configured" : "not configured"}
+          </span>
+        </p>
+        <p className="text-xs text-slate-500 mb-3">
+          SERPAPI_API_KEY или BING_SEARCH_API_KEY в .env.local
+        </p>
         <button
           onClick={handleCheckKey}
           disabled={checking || apiKeyStatus === "not configured"}
@@ -192,22 +209,135 @@ export default function AdminPage() {
           />
         </div>
 
-        <div>
-          <label className="block text-xs font-medium text-slate-700 mb-2">
-            System Prompt (для режима "Экскурсия по фото")
-          </label>
-          <textarea
-            value={config.photo?.systemPrompt || ""}
-            onChange={(e) =>
-              setConfig({
-                ...config,
-                photo: { systemPrompt: e.target.value },
-              })
-            }
-            rows={8}
-            className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20 resize-none"
-            placeholder="Введите system prompt для режима фото..."
-          />
+        <div className="border-t border-slate-200 pt-4">
+          <h2 className="text-sm font-semibold text-slate-900 mb-3">Фото (версия 2)</h2>
+          
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-2">
+                System Prompt (для режима "Экскурсия по фото")
+              </label>
+              <textarea
+                value={config.photo?.systemPrompt || ""}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    photo: {
+                      ...config.photo,
+                      systemPrompt: e.target.value,
+                      identifyPrompt: config.photo?.identifyPrompt || "",
+                      resolvePrompt: config.photo?.resolvePrompt || "",
+                      tourPrompt: config.photo?.tourPrompt || "",
+                      followupPrompt: config.photo?.followupPrompt || "",
+                    },
+                  })
+                }
+                rows={6}
+                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20 resize-none"
+                placeholder="Введите system prompt для режима фото..."
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-2">
+                Identify Prompt (для определения объекта)
+              </label>
+              <textarea
+                value={config.photo?.identifyPrompt || ""}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    photo: {
+                      ...config.photo,
+                      identifyPrompt: e.target.value,
+                      systemPrompt: config.photo?.systemPrompt || "",
+                      resolvePrompt: config.photo?.resolvePrompt || "",
+                      tourPrompt: config.photo?.tourPrompt || "",
+                      followupPrompt: config.photo?.followupPrompt || "",
+                    },
+                  })
+                }
+                rows={6}
+                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20 resize-none"
+                placeholder="Введите prompt для идентификации объекта..."
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-2">
+                Resolve Prompt (выбор совпадения по результатам поиска)
+              </label>
+              <textarea
+                value={config.photo?.resolvePrompt || ""}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    photo: {
+                      ...config.photo,
+                      resolvePrompt: e.target.value,
+                      systemPrompt: config.photo?.systemPrompt || "",
+                      identifyPrompt: config.photo?.identifyPrompt || "",
+                      tourPrompt: config.photo?.tourPrompt || "",
+                      followupPrompt: config.photo?.followupPrompt || "",
+                    },
+                  })
+                }
+                rows={5}
+                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20 resize-none"
+                placeholder="Prompt для выбора лучшей идентификации по веб-результатам..."
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-2">
+                Tour Prompt (для экскурсии)
+              </label>
+              <textarea
+                value={config.photo?.tourPrompt || ""}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    photo: {
+                      ...config.photo,
+                      tourPrompt: e.target.value,
+                      systemPrompt: config.photo?.systemPrompt || "",
+                      identifyPrompt: config.photo?.identifyPrompt || "",
+                      resolvePrompt: config.photo?.resolvePrompt || "",
+                      followupPrompt: config.photo?.followupPrompt || "",
+                    },
+                  })
+                }
+                rows={6}
+                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20 resize-none"
+                placeholder="Введите prompt для экскурсии..."
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-2">
+                Followup Prompt (для уточняющих вопросов)
+              </label>
+              <textarea
+                value={config.photo?.followupPrompt || ""}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    photo: {
+                      ...config.photo,
+                      followupPrompt: e.target.value,
+                      systemPrompt: config.photo?.systemPrompt || "",
+                      identifyPrompt: config.photo?.identifyPrompt || "",
+                      resolvePrompt: config.photo?.resolvePrompt || "",
+                      tourPrompt: config.photo?.tourPrompt || "",
+                    },
+                  })
+                }
+                rows={4}
+                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20 resize-none"
+                placeholder="Введите prompt для уточняющих вопросов..."
+              />
+            </div>
+          </div>
         </div>
 
         <div>

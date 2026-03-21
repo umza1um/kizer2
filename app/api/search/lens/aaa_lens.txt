@@ -1,0 +1,2 @@
+RU: API Reverse Image Search через SerpApi Google Lens. POST /api/search/lens принимает imageDataUrl, возвращает bestGuess, visualMatches, pagesWithMatches, rawTopLinks. Требует PUBLIC_BASE_URL и SERPAPI_API_KEY.
+EN: Reverse Image Search API via SerpApi Google Lens. POST /api/search/lens accepts imageDataUrl, returns bestGuess, visualMatches, pagesWithMatches, rawTopLinks. Requires PUBLIC_BASE_URL and SERPAPI_API_KEY.

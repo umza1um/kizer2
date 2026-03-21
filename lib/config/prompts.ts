@@ -8,6 +8,10 @@ export type PromptsConfig = {
   };
   photo: {
     systemPrompt: string;
+    identifyPrompt: string;
+    resolvePrompt: string;
+    tourPrompt: string;
+    followupPrompt: string;
   };
   settings: {
     defaultTone: "scientific" | "balanced" | "entertainment";

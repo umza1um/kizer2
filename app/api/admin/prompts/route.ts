@@ -5,10 +5,17 @@ export async function GET() {
   try {
     const config = loadPrompts();
     const hasApiKey = !!process.env.OPENAI_API_KEY;
+    const searchProvider = process.env.SEARCH_PROVIDER || "serpapi";
+    const searchKeyConfigured = !!(
+      (searchProvider === "serpapi" && process.env.SERPAPI_API_KEY) ||
+      (searchProvider === "bing" && process.env.BING_SEARCH_API_KEY)
+    );
 
     return NextResponse.json({
       config,
       apiKeyStatus: hasApiKey ? "configured" : "not configured",
+      searchProvider,
+      searchKeyStatus: searchKeyConfigured ? "configured" : "not configured",
     });
   } catch (error) {
     console.error("Failed to load prompts:", error);
@@ -31,11 +38,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Ensure photo section exists
+    // Ensure photo section exists with all required fields
     if (!config.photo) {
       config.photo = {
         systemPrompt: "Ты — Кизер, дружелюбный и эрудированный ИИ-экскурсовод. Расскажи об объектах на фотографии интересно и увлекательно.",
+        identifyPrompt: "",
+        resolvePrompt: "",
+        tourPrompt: "",
+        followupPrompt: "",
       };
+    } else {
+      if (!config.photo.identifyPrompt) config.photo.identifyPrompt = "";
+      const photo = config.photo as { resolvePrompt?: string };
+      if (typeof photo.resolvePrompt !== "string") photo.resolvePrompt = "";
+      if (!config.photo.tourPrompt) config.photo.tourPrompt = "";
+      if (!config.photo.followupPrompt) config.photo.followupPrompt = "";
     }
 
     savePrompts(config);

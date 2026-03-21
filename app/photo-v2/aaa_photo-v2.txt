@@ -1,0 +1,5 @@
+RU:
+Папка для страницы "Экскурсия по фото версия 2" — улучшенной версии режима работы с фотографиями.
+
+EN:
+Folder for the "Photo Tour Version 2" page — an improved version of the photo-based tour mode.

@@ -1,0 +1,2 @@
+RU: API поиска по сети для Кизера. POST /api/search/web принимает queries[] и возвращает результаты (SerpAPI). Поиск только на сервере.
+EN: Web search API for Kizer. POST /api/search/web accepts queries[] and returns results (SerpAPI). Search runs server-side only.

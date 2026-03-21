@@ -1,0 +1,2 @@
+RU: Папка lib/search — утилиты веб-поиска для Кизера. SerpAPI (Google Search) вызывается только на сервере, ключ из process.env.
+EN: lib/search — web search utilities for Kizer. SerpAPI (Google Search) is called server-side only; API key from process.env.

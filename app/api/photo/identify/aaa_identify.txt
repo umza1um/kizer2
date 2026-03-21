@@ -1,0 +1,5 @@
+RU:
+API endpoint для определения объекта на фотографии. Использует OpenAI Vision API для анализа изображения и возвращает структурированный результат (название, тип, уверенность).
+
+EN:
+API endpoint for identifying objects in photographs. Uses OpenAI Vision API to analyze images and returns structured results (name, type, confidence).

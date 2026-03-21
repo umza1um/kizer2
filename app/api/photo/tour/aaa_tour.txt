@@ -1,0 +1,5 @@
+RU:
+API endpoint для генерации экскурсионного рассказа об объекте. Использует OpenAI Responses API для создания интересной экскурсии на основе определённого объекта.
+
+EN:
+API endpoint for generating tour narratives about objects. Uses OpenAI Responses API to create engaging tours based on identified objects.

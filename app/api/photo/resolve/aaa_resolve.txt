@@ -1,0 +1,2 @@
+RU: API выбора лучшей идентификации по результатам веб-поиска. POST /api/photo/resolve принимает features (identify) + searchResults, возвращает objectName, objectType, locationHint, confidence, why, sources.
+EN: API for choosing best identification from web search results. POST /api/photo/resolve accepts features + searchResults, returns objectName, objectType, locationHint, confidence, why, sources.

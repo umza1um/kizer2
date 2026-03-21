@@ -1,0 +1,2 @@
+RU: API отдачи временного изображения по id для SerpApi Google Lens (нужен публичный URL). GET /api/photo/image/[id].
+EN: API to serve temporary image by id for SerpApi Google Lens (requires public URL). GET /api/photo/image/[id].

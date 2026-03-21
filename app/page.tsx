@@ -43,16 +43,16 @@ export default function Home() {
           </div>
         </Link>
 
-        <Link href={ROUTES.geo} className="block">
+        <Link href={ROUTES.photoV2} className="block">
           <div className="flex flex-col gap-1 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4 shadow-sm active:scale-[0.99] transition">
             <span className="text-[13px] font-medium text-slate-500">
               РЕЖИМ 3
             </span>
             <span className="text-base font-semibold text-slate-900">
-              ЭКСКУРСИЯ ПО ГЕОЛОКАЦИИ
+              ЭКСКУРСИЯ ПО ФОТО ВЕРСИЯ 2
             </span>
             <span className="mt-1 text-xs text-slate-500">
-              Ходите по пространству и получайте подсказки по вашему маршруту.
+              Показывайте фотографии экспонатов и узнайте о них больше (улучшенная версия).
             </span>
           </div>
         </Link>
