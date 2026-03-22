@@ -382,6 +382,26 @@ export default function QuestionsPage() {
     return null;
   }, [messages, lastAssistantText]);
 
+  /**
+   * История без дублирования последнего ответа ассистента — он показан в крупном блоке «Ответ Кизера».
+   */
+  const displayMessages = useMemo(() => {
+    if (messages.length === 0) return [];
+    const last = messages[messages.length - 1];
+    if (last.role === "assistant") {
+      return messages.slice(0, -1);
+    }
+    return messages;
+  }, [messages]);
+
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [displayMessages]);
+
   return (
     <main className="flex min-h-[640px] w-full max-w-[390px] flex-col rounded-[32px] bg-white px-5 pb-4 pt-6 shadow-[0_18px_45px_rgba(15,23,42,0.12)] border border-slate-200">
       <header className="flex items-center justify-between mb-4">
@@ -430,18 +450,21 @@ export default function QuestionsPage() {
         </div>
       )}
 
-      {lastAssistantText && messages.length === 0 && (
+      {activeTtsTarget && (
         <div className="mb-4 rounded-2xl bg-slate-900 px-4 py-3 text-white">
           <div className="flex items-start justify-between mb-1">
             <p className="text-xs font-medium text-slate-300">Ответ Кизера:</p>
           </div>
-          <p className="text-sm">{lastAssistantText}</p>
+          <p className="text-sm whitespace-pre-wrap">{activeTtsTarget.text}</p>
         </div>
       )}
 
-      {messages.length > 0 && (
-        <div className="mb-4 flex-1 overflow-y-auto space-y-3 max-h-[200px]">
-          {messages.map((msg, idx) => (
+      {displayMessages.length > 0 && (
+        <div
+          ref={messagesScrollRef}
+          className="mb-4 flex-1 overflow-y-auto space-y-3 max-h-[200px]"
+        >
+          {displayMessages.map((msg, idx) => (
             <div
               key={idx}
               className={`rounded-2xl px-3 py-2 ${
