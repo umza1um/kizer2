@@ -3,6 +3,16 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { ROUTES } from "../../lib/constants/routes";
+import {
+  loadCloudVoice,
+  loadTtsMode,
+  loadVoiceUri,
+  OPENAI_TTS_VOICES,
+  saveCloudVoice,
+  saveTtsMode,
+  saveVoiceUri,
+  type TtsMode,
+} from "../../lib/questions/ttsPrefs";
 
 type Message = {
   role: "user" | "assistant";
@@ -56,6 +66,16 @@ export default function QuestionsPage() {
   const [hasSpeechRecognition, setHasSpeechRecognition] = useState(false);
   const [hasSpeechSynthesis, setHasSpeechSynthesis] = useState(false);
 
+  const [cloudTtsEnabled, setCloudTtsEnabled] = useState(false);
+  const [ttsMode, setTtsMode] = useState<TtsMode>("browser");
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoiceUri, setSelectedVoiceUri] = useState("");
+  const [cloudVoice, setCloudVoice] = useState("nova");
+
+  const cloudAudioRef = useRef<HTMLAudioElement | null>(null);
+  const cloudBlobUrlRef = useRef<string | null>(null);
+  const ttsEngineRef = useRef<"browser" | "cloud" | null>(null);
+
   /** Позиция ползунка 0–1 для каждого блока ответа (по id). */
   const [ttsPositionById, setTtsPositionById] = useState<Record<string, number>>({});
   const [playingTtsId, setPlayingTtsId] = useState<string | null>(null);
@@ -65,23 +85,49 @@ export default function QuestionsPage() {
     (text: string, source?: "text" | "voice") => Promise<void>
   >(() => Promise.resolve());
 
-  const applyRussianVoice = useCallback((utterance: SpeechSynthesisUtterance) => {
-    const synth = window.speechSynthesis;
-    if (!synth) return;
-    const voices = synth.getVoices();
-    if (voices.length === 0) return;
-    const russianVoice =
-      voices.find(
-        (v) => v.lang.startsWith("ru") && (v.name.includes("женск") || v.name.includes("Female"))
-      ) || voices.find((v) => v.lang.startsWith("ru"));
-    if (russianVoice) utterance.voice = russianVoice;
-  }, []);
+  /** Выбранный в настройках голос браузера или авто-подбор русского. */
+  const applySelectedVoice = useCallback(
+    (utterance: SpeechSynthesisUtterance) => {
+      const synth = window.speechSynthesis;
+      if (!synth) return;
+      const voices = synth.getVoices();
+      if (voices.length === 0) return;
+      let v: SpeechSynthesisVoice | undefined;
+      if (selectedVoiceUri) {
+        v = voices.find((x) => x.voiceURI === selectedVoiceUri);
+      }
+      if (!v) {
+        v =
+          voices.find(
+            (x) =>
+              x.lang.toLowerCase().startsWith("ru") &&
+              (x.name.toLowerCase().includes("female") ||
+                x.name.includes("женск") ||
+                x.name.includes("Milena") ||
+                x.name.includes("Katya"))
+          ) || voices.find((x) => x.lang.toLowerCase().startsWith("ru"));
+      }
+      if (v) utterance.voice = v;
+    },
+    [selectedVoiceUri]
+  );
 
   const stopSpeaking = useCallback(() => {
     playingTtsIdRef.current = null;
     setPlayingTtsId(null);
+    ttsEngineRef.current = null;
     if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
+    }
+    const audio = cloudAudioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.src = "";
+      cloudAudioRef.current = null;
+    }
+    if (cloudBlobUrlRef.current) {
+      URL.revokeObjectURL(cloudBlobUrlRef.current);
+      cloudBlobUrlRef.current = null;
     }
     setStatus("ready");
   }, []);
@@ -105,6 +151,7 @@ export default function QuestionsPage() {
 
       playingTtsIdRef.current = ttsId;
       setPlayingTtsId(ttsId);
+      ttsEngineRef.current = "browser";
 
       let i = Math.max(0, Math.min(startSegmentIndex, segments.length - 1));
 
@@ -127,12 +174,12 @@ export default function QuestionsPage() {
 
         const utterance = new SpeechSynthesisUtterance(segments[i]);
         utterance.lang = "ru-RU";
-        utterance.rate = 0.85;
-        utterance.pitch = 1.15;
+        utterance.rate = 0.92;
+        utterance.pitch = 1;
         utterance.volume = 0.95;
 
         const trySpeak = () => {
-          applyRussianVoice(utterance);
+          applySelectedVoice(utterance);
           utterance.onstart = () => setStatus("speaking");
           utterance.onend = () => {
             i += 1;
@@ -163,7 +210,96 @@ export default function QuestionsPage() {
 
       speakNext();
     },
-    [applyRussianVoice]
+    [applySelectedVoice]
+  );
+
+  /** Облачная озвучка (OpenAI): один MP3, перемотка по времени. */
+  const playCloudTts = useCallback(
+    async (rawText: string, ttsId: string, startPosition01: number) => {
+      const cleaned = cleanTextForSpeech(rawText);
+      if (!cleaned.trim()) return;
+
+      stopSpeaking();
+
+      playingTtsIdRef.current = ttsId;
+      setPlayingTtsId(ttsId);
+      ttsEngineRef.current = "cloud";
+
+      try {
+        const res = await fetch("/api/questions/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: cleaned, voice: cloudVoice }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert(typeof err.error === "string" ? err.error : "Ошибка облачной озвучки");
+          stopSpeaking();
+          return;
+        }
+
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        if (cloudBlobUrlRef.current) {
+          URL.revokeObjectURL(cloudBlobUrlRef.current);
+        }
+        cloudBlobUrlRef.current = url;
+
+        const audio = new Audio(url);
+        cloudAudioRef.current = audio;
+
+        const onTimeUpdate = () => {
+          if (playingTtsIdRef.current !== ttsId) return;
+          const d = audio.duration;
+          if (!d || !isFinite(d)) return;
+          const p = audio.currentTime / d;
+          setTtsPositionById((prev) => ({
+            ...prev,
+            [ttsId]: Math.min(1, Math.max(0, p)),
+          }));
+        };
+
+        audio.addEventListener("timeupdate", onTimeUpdate);
+
+        audio.addEventListener(
+          "loadedmetadata",
+          () => {
+            const d = audio.duration;
+            if (d && isFinite(d) && startPosition01 > 0) {
+              audio.currentTime = startPosition01 * d;
+            }
+          },
+          { once: true }
+        );
+
+        audio.onended = () => {
+          audio.removeEventListener("timeupdate", onTimeUpdate);
+          cloudAudioRef.current = null;
+          if (cloudBlobUrlRef.current) {
+            URL.revokeObjectURL(cloudBlobUrlRef.current);
+            cloudBlobUrlRef.current = null;
+          }
+          playingTtsIdRef.current = null;
+          setPlayingTtsId(null);
+          ttsEngineRef.current = null;
+          setTtsPositionById((prev) => ({ ...prev, [ttsId]: 1 }));
+          setStatus("ready");
+        };
+
+        audio.onerror = () => {
+          audio.removeEventListener("timeupdate", onTimeUpdate);
+          stopSpeaking();
+        };
+
+        setStatus("speaking");
+        await audio.play();
+      } catch (e) {
+        console.error(e);
+        stopSpeaking();
+      }
+    },
+    [cloudVoice, stopSpeaking]
   );
 
   /** Ползунок 0–1 → индекс сегмента с которого начать. */
@@ -177,10 +313,15 @@ export default function QuestionsPage() {
   };
 
   const handleTtsPlay = (rawText: string, ttsId: string) => {
+    const pos = ttsPositionById[ttsId] ?? 0;
+    if (ttsMode === "cloud" && cloudTtsEnabled) {
+      void playCloudTts(rawText, ttsId, pos);
+      return;
+    }
+    if (!hasSpeechSynthesis) return;
     const cleaned = cleanTextForSpeech(rawText);
     const segments = splitIntoSpeakSegments(cleaned);
     if (segments.length === 0) return;
-    const pos = ttsPositionById[ttsId] ?? 0;
     const startIdx = position01ToStartIndex(pos, segments.length);
     playSegmentsFrom(rawText, ttsId, startIdx);
   };
@@ -191,13 +332,22 @@ export default function QuestionsPage() {
 
   const handleTtsSliderChange = (ttsId: string, rawText: string, value01: number) => {
     setTtsPositionById((prev) => ({ ...prev, [ttsId]: value01 }));
-    if (playingTtsIdRef.current === ttsId) {
-      const cleaned = cleanTextForSpeech(rawText);
-      const segments = splitIntoSpeakSegments(cleaned);
-      if (segments.length === 0) return;
-      const startIdx = position01ToStartIndex(value01, segments.length);
-      playSegmentsFrom(rawText, ttsId, startIdx);
+    if (playingTtsIdRef.current !== ttsId) return;
+
+    if (ttsEngineRef.current === "cloud" && cloudAudioRef.current) {
+      const audio = cloudAudioRef.current;
+      const d = audio.duration;
+      if (d && isFinite(d)) {
+        audio.currentTime = value01 * d;
+      }
+      return;
     }
+
+    const cleaned = cleanTextForSpeech(rawText);
+    const segments = splitIntoSpeakSegments(cleaned);
+    if (segments.length === 0) return;
+    const startIdx = position01ToStartIndex(value01, segments.length);
+    playSegmentsFrom(rawText, ttsId, startIdx);
   };
 
   const handleSendMessage = async (text: string, source: "text" | "voice" = "text") => {
@@ -241,9 +391,16 @@ export default function QuestionsPage() {
       const assistantIdx = updated.length - 1;
       const ttsId = `m-${assistantIdx}`;
 
-      const canTts =
+      const browserTts =
         typeof window !== "undefined" && "speechSynthesis" in window && !!window.speechSynthesis;
-      if (canTts) {
+      const useCloud = ttsMode === "cloud" && cloudTtsEnabled;
+
+      if (useCloud) {
+        setTtsPositionById((prev) => ({ ...prev, [ttsId]: 0 }));
+        setTimeout(() => {
+          void playCloudTts(assistantText, ttsId, 0);
+        }, 300);
+      } else if (browserTts) {
         setTtsPositionById((prev) => ({ ...prev, [ttsId]: 0 }));
         setTimeout(() => {
           playSegmentsFrom(assistantText, ttsId, 0);
@@ -262,6 +419,41 @@ export default function QuestionsPage() {
   };
 
   handleSendMessageRef.current = handleSendMessage;
+
+  useEffect(() => {
+    setSelectedVoiceUri(loadVoiceUri());
+    setTtsMode(loadTtsMode());
+    setCloudVoice(loadCloudVoice());
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/questions/tts")
+      .then((r) => r.json())
+      .then((d: { enabled?: boolean }) => setCloudTtsEnabled(Boolean(d.enabled)))
+      .catch(() => setCloudTtsEnabled(false));
+  }, []);
+
+  useEffect(() => {
+    if (!cloudTtsEnabled && ttsMode === "cloud") {
+      setTtsMode("browser");
+      saveTtsMode("browser");
+    }
+  }, [cloudTtsEnabled, ttsMode]);
+
+  const refreshVoices = useCallback(() => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    const all = window.speechSynthesis.getVoices();
+    const ru = all.filter((v) => v.lang.toLowerCase().startsWith("ru"));
+    setAvailableVoices(ru.length > 0 ? ru : all);
+  }, []);
+
+  useEffect(() => {
+    refreshVoices();
+    const synth = window.speechSynthesis;
+    if (!synth) return;
+    synth.addEventListener("voiceschanged", refreshVoices);
+    return () => synth.removeEventListener("voiceschanged", refreshVoices);
+  }, [refreshVoices]);
 
   useEffect(() => {
     const speechRecognitionAvailable =
@@ -310,6 +502,10 @@ export default function QuestionsPage() {
       }
       if (window.speechSynthesis) {
         window.speechSynthesis.cancel();
+      }
+      if (cloudBlobUrlRef.current) {
+        URL.revokeObjectURL(cloudBlobUrlRef.current);
+        cloudBlobUrlRef.current = null;
       }
     };
   }, []);
@@ -479,51 +675,133 @@ export default function QuestionsPage() {
         </div>
       )}
 
-      {hasSpeechSynthesis && activeTtsTarget && (
-        <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-          <p className="text-xs font-medium text-slate-600 mb-2">Озвучка экскурсии</p>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => handleTtsPlay(activeTtsTarget.text, activeTtsTarget.id)}
-              disabled={status === "thinking"}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-40"
-              title="Слушать с выбранного места"
-            >
-              ▶
-            </button>
-            <button
-              type="button"
-              onClick={handleTtsStop}
-              disabled={playingTtsId !== activeTtsTarget.id}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-xs font-semibold text-slate-800 transition hover:bg-slate-100 disabled:opacity-40"
-              title="Стоп"
-            >
-              ⏹
-            </button>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              step={1}
-              value={Math.round((ttsPositionById[activeTtsTarget.id] ?? 0) * 100)}
-              onChange={(e) =>
-                handleTtsSliderChange(
-                  activeTtsTarget.id,
-                  activeTtsTarget.text,
-                  Number(e.target.value) / 100
-                )
-              }
-              disabled={status === "thinking"}
-              className="min-w-0 flex-1 accent-slate-900"
-              title="Перемотка по частям текста"
-            />
+      {activeTtsTarget && (hasSpeechSynthesis || cloudTtsEnabled) && (
+          <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <p className="text-xs font-medium text-slate-600 mb-2">Озвучка экскурсии</p>
+
+            {cloudTtsEnabled && (
+              <div className="mb-3">
+                <label className="block text-xs font-medium text-slate-500 mb-1">
+                  Источник звука
+                </label>
+                <select
+                  value={ttsMode}
+                  onChange={(e) => {
+                    const m = e.target.value as TtsMode;
+                    stopSpeaking();
+                    setTtsMode(m);
+                    saveTtsMode(m);
+                  }}
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+                >
+                  <option value="browser">Голос браузера (бесплатно)</option>
+                  <option value="cloud">Облако OpenAI (нейро)</option>
+                </select>
+              </div>
+            )}
+
+            {!cloudTtsEnabled && (
+              <p className="mb-3 text-[10px] text-amber-700">
+                Облачная нейро-озвучка: задайте OPENAI_API_KEY на сервере. Сейчас доступен голос
+                браузера.
+              </p>
+            )}
+
+            {ttsMode === "browser" && hasSpeechSynthesis && availableVoices.length > 0 && (
+              <div className="mb-3">
+                <label className="block text-xs font-medium text-slate-500 mb-1">
+                  Голос устройства
+                </label>
+                <select
+                  value={selectedVoiceUri}
+                  onChange={(e) => {
+                    const uri = e.target.value;
+                    setSelectedVoiceUri(uri);
+                    saveVoiceUri(uri);
+                  }}
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+                >
+                  <option value="">Авто (русский)</option>
+                  {availableVoices.map((v) => (
+                    <option key={v.voiceURI} value={v.voiceURI}>
+                      {v.name} ({v.lang})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {ttsMode === "cloud" && cloudTtsEnabled && (
+              <div className="mb-3">
+                <label className="block text-xs font-medium text-slate-500 mb-1">
+                  Голос OpenAI (tts-1-hd)
+                </label>
+                <select
+                  value={cloudVoice}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setCloudVoice(v);
+                    saveCloudVoice(v);
+                  }}
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+                >
+                  {OPENAI_TTS_VOICES.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => handleTtsPlay(activeTtsTarget.text, activeTtsTarget.id)}
+                disabled={status === "thinking"}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-40"
+                title="Слушать с выбранного места"
+              >
+                ▶
+              </button>
+              <button
+                type="button"
+                onClick={handleTtsStop}
+                disabled={playingTtsId !== activeTtsTarget.id}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-xs font-semibold text-slate-800 transition hover:bg-slate-100 disabled:opacity-40"
+                title="Стоп"
+              >
+                ⏹
+              </button>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={Math.round((ttsPositionById[activeTtsTarget.id] ?? 0) * 100)}
+                onChange={(e) =>
+                  handleTtsSliderChange(
+                    activeTtsTarget.id,
+                    activeTtsTarget.text,
+                    Number(e.target.value) / 100
+                  )
+                }
+                disabled={status === "thinking"}
+                className="min-w-0 flex-1 accent-slate-900"
+                title={
+                  ttsMode === "cloud" && cloudTtsEnabled
+                    ? "Перемотка по времени"
+                    : "Перемотка по частям текста"
+                }
+              />
+            </div>
+            <p className="mt-2 text-[10px] text-slate-500">
+              {ttsMode === "cloud" && cloudTtsEnabled
+                ? "Перемотка по времени записи; во время воспроизведения можно перетащить ползунок."
+                : "Перемотка по предложениям; во время чтения можно перетащить ползунок."}
+            </p>
           </div>
-          <p className="mt-2 text-[10px] text-slate-500">
-            Перемотка по предложениям; во время чтения можно перетащить ползунок.
-          </p>
-        </div>
-      )}
+        )}
 
       <form onSubmit={handleTextSubmit} className="mt-auto space-y-2">
         <input
