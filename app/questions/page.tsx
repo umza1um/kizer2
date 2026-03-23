@@ -352,6 +352,17 @@ export default function QuestionsPage() {
     void handleSendMessage(userInput, "text");
   };
 
+  const handleLeavePage = useCallback(() => {
+    stopSpeaking();
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore stop errors during navigation
+      }
+    }
+  }, [stopSpeaking]);
+
   const getStatusText = () => {
     switch (status) {
       case "ready":
@@ -408,6 +419,7 @@ export default function QuestionsPage() {
         <h1 className="text-lg font-semibold text-slate-900">Экскурсия по вопросам</h1>
         <Link
           href={ROUTES.home}
+          onClick={handleLeavePage}
           className="text-sm text-slate-500 hover:text-slate-700"
         >
           назад
@@ -546,6 +558,7 @@ export default function QuestionsPage() {
       <div className="mt-4 border-t border-slate-200 pt-3 pb-[env(safe-area-inset-bottom,0px)]">
         <Link
           href={ROUTES.home}
+          onClick={handleLeavePage}
           className="inline-flex w-full items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
         >
           На главную
