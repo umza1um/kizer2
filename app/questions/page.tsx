@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { ROUTES } from "../../lib/constants/routes";
 
@@ -48,7 +48,6 @@ function cleanTextForSpeech(text: string): string {
 export default function QuestionsPage() {
   const [status, setStatus] = useState<Status>("ready");
   const [messages, setMessages] = useState<Message[]>([]);
-  const [userInput, setUserInput] = useState("");
   const [lastUserSpeech, setLastUserSpeech] = useState("");
   const [lastAssistantText, setLastAssistantText] = useState("");
 
@@ -207,8 +206,6 @@ export default function QuestionsPage() {
     const newMessages = [...messages, userMessage].slice(-10);
     setMessages(newMessages);
     setStatus("thinking");
-    setUserInput("");
-
     try {
       const response = await fetch("/api/questions/chat", {
         method: "POST",
@@ -347,11 +344,6 @@ export default function QuestionsPage() {
     }, delay);
   };
 
-  const handleTextSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    void handleSendMessage(userInput, "text");
-  };
-
   const handleLeavePage = useCallback(() => {
     stopSpeaking();
     if (recognitionRef.current) {
@@ -362,56 +354,6 @@ export default function QuestionsPage() {
       }
     }
   }, [stopSpeaking]);
-
-  const getStatusText = () => {
-    switch (status) {
-      case "ready":
-        return "Готов к общению";
-      case "listening":
-        return "Слушаю...";
-      case "thinking":
-        return "Думаю...";
-      case "speaking":
-        return "Отвечаю...";
-      default:
-        return "Готов к общению";
-    }
-  };
-
-  /** Текущий ответ для озвучки: последний ответ ассистента в чате или solo-блок. */
-  const activeTtsTarget = useMemo(() => {
-    if (messages.length > 0) {
-      for (let idx = messages.length - 1; idx >= 0; idx--) {
-        if (messages[idx].role === "assistant") {
-          return { id: `m-${idx}`, text: messages[idx].content };
-        }
-      }
-    }
-    if (lastAssistantText && messages.length === 0) {
-      return { id: "solo", text: lastAssistantText };
-    }
-    return null;
-  }, [messages, lastAssistantText]);
-
-  /**
-   * История без дублирования последнего ответа ассистента — он показан в крупном блоке «Ответ Кизера».
-   */
-  const displayMessages = useMemo(() => {
-    if (messages.length === 0) return [];
-    const last = messages[messages.length - 1];
-    if (last.role === "assistant") {
-      return messages.slice(0, -1);
-    }
-    return messages;
-  }, [messages]);
-
-  const messagesScrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const el = messagesScrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [displayMessages]);
 
   return (
     <main className="flex min-h-[640px] w-full max-w-[390px] flex-col rounded-[32px] bg-white px-5 pb-4 pt-6 shadow-[0_18px_45px_rgba(15,23,42,0.12)] border border-slate-200">
@@ -426,136 +368,50 @@ export default function QuestionsPage() {
         </Link>
       </header>
 
-      <div className="mb-4 text-center">
-        <p className="text-xs font-medium text-slate-500">{getStatusText()}</p>
-      </div>
-
-      {hasSpeechRecognition && (
-        <div className="mb-6 flex justify-center">
-          <button
-            onClick={handleStartListening}
-            disabled={status === "thinking"}
-            className={`flex h-20 w-20 items-center justify-center rounded-full text-3xl shadow-lg transition active:scale-95 hover:bg-slate-800 ${
-              status === "speaking"
-                ? "bg-red-600 hover:bg-red-700"
-                : status === "listening"
-                  ? "bg-blue-600 hover:bg-blue-700"
-                  : "bg-slate-900"
-            } ${status === "thinking" ? "opacity-50 cursor-not-allowed" : ""}`}
-            title={
-              status === "speaking"
+      <div className="mb-6 flex justify-center">
+        <button
+          onClick={handleStartListening}
+          disabled={!hasSpeechRecognition || status === "thinking"}
+          className={`flex h-20 w-20 items-center justify-center rounded-full text-3xl shadow-lg transition active:scale-95 hover:bg-slate-800 ${
+            status === "speaking"
+              ? "bg-red-600 hover:bg-red-700"
+              : status === "listening"
+                ? "bg-blue-600 hover:bg-blue-700"
+                : "bg-slate-900"
+          } ${!hasSpeechRecognition || status === "thinking" ? "opacity-50 cursor-not-allowed" : ""}`}
+          title={
+            !hasSpeechRecognition
+              ? "Голосовой ввод недоступен"
+              : status === "speaking"
                 ? "Прервать и начать слушать"
                 : status === "listening"
                   ? "Остановить прослушивание"
                   : "Начать говорить"
-            }
-          >
-            🎤
-          </button>
-        </div>
-      )}
-
-      {lastUserSpeech && (
-        <div className="mb-4 rounded-2xl bg-slate-50 px-4 py-3 border border-slate-200">
-          <p className="text-xs font-medium text-slate-500 mb-1">Вы сказали:</p>
-          <p className="text-sm text-slate-900">{lastUserSpeech}</p>
-        </div>
-      )}
-
-      {activeTtsTarget && (
-        <div className="mb-4 rounded-2xl bg-slate-900 px-4 py-3 text-white">
-          <div className="flex items-start justify-between mb-1">
-            <p className="text-xs font-medium text-slate-300">Ответ Кизера:</p>
-          </div>
-          <p className="text-sm whitespace-pre-wrap">{activeTtsTarget.text}</p>
-        </div>
-      )}
-
-      {displayMessages.length > 0 && (
-        <div
-          ref={messagesScrollRef}
-          className="mb-4 flex-1 overflow-y-auto space-y-3 max-h-[200px]"
+          }
         >
-          {displayMessages.map((msg, idx) => (
-            <div
-              key={idx}
-              className={`rounded-2xl px-3 py-2 ${
-                msg.role === "user"
-                  ? "bg-slate-50 text-slate-900 ml-auto text-right"
-                  : "bg-slate-900 text-white"
-              }`}
-            >
-              <p className="text-xs flex-1 whitespace-pre-wrap">{msg.content}</p>
-            </div>
-          ))}
-        </div>
-      )}
+          🎤
+        </button>
+      </div>
 
-      {hasSpeechSynthesis && activeTtsTarget && (
-        <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-          <p className="text-xs font-medium text-slate-600 mb-2">Озвучка экскурсии</p>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => handleTtsPlay(activeTtsTarget.text, activeTtsTarget.id)}
-              disabled={status === "thinking"}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-40"
-              title="Слушать с выбранного места"
-            >
-              ▶
-            </button>
-            <button
-              type="button"
-              onClick={handleTtsStop}
-              disabled={playingTtsId !== activeTtsTarget.id}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-xs font-semibold text-slate-800 transition hover:bg-slate-100 disabled:opacity-40"
-              title="Стоп"
-            >
-              ⏹
-            </button>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              step={1}
-              value={Math.round((ttsPositionById[activeTtsTarget.id] ?? 0) * 100)}
-              onChange={(e) =>
-                handleTtsSliderChange(
-                  activeTtsTarget.id,
-                  activeTtsTarget.text,
-                  Number(e.target.value) / 100
-                )
-              }
-              disabled={status === "thinking"}
-              className="min-w-0 flex-1 accent-slate-900"
-              title="Перемотка по частям текста"
-            />
-          </div>
-          <p className="mt-2 text-[10px] text-slate-500">
-            Перемотка по предложениям; во время чтения можно перетащить ползунок.
+      <div className="mb-4 rounded-2xl bg-slate-50 px-4 py-3 border border-slate-200">
+        <p className="text-xs font-medium text-slate-500 mb-1">Ваш последний вопрос:</p>
+        <p className="text-sm text-slate-900">
+          {lastUserSpeech || "Здесь будет отображаться ваш последний вопрос."}
+        </p>
+      </div>
+
+      <div className="mb-4 rounded-2xl bg-slate-900 px-4 py-3 text-white">
+        <div className="flex items-start justify-between mb-1">
+          <p className="text-xs font-medium text-slate-300">Ответ Кизера:</p>
+        </div>
+        <div className="h-[32vh] min-h-[200px] max-h-[280px] overflow-y-auto pr-1">
+          <p className="text-sm whitespace-pre-wrap">
+            {lastAssistantText || "Здесь будет отображаться последний ответ экскурсовода."}
           </p>
         </div>
-      )}
+      </div>
 
-      <form onSubmit={handleTextSubmit} className="mt-auto space-y-2">
-        <input
-          type="text"
-          value={userInput}
-          onChange={(e) => setUserInput(e.target.value)}
-          placeholder="Введите вопрос..."
-          disabled={status !== "ready"}
-          className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20 disabled:opacity-50"
-        />
-        <button
-          type="submit"
-          disabled={!userInput.trim() || status !== "ready"}
-          className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-800"
-        >
-          Отправить
-        </button>
-      </form>
-
-      <div className="mt-4 border-t border-slate-200 pt-3 pb-[env(safe-area-inset-bottom,0px)]">
+      <div className="mt-auto border-t border-slate-200 pt-3 pb-[env(safe-area-inset-bottom,0px)]">
         <Link
           href={ROUTES.home}
           onClick={handleLeavePage}
