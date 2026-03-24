@@ -355,6 +355,9 @@ export default function QuestionsPage() {
     }
   }, [stopSpeaking]);
 
+  const activeTtsId = messages.length > 0 ? `m-${messages.length - 1}` : "solo";
+  const canControlTts = Boolean(lastAssistantText.trim());
+
   return (
     <main className="flex min-h-[640px] w-full max-w-[390px] flex-col rounded-[32px] bg-white px-5 pb-4 pt-6 shadow-[0_18px_45px_rgba(15,23,42,0.12)] border border-slate-200">
       <header className="flex items-center justify-between mb-4">
@@ -399,6 +402,49 @@ export default function QuestionsPage() {
           {lastUserSpeech || "Здесь будет отображаться ваш последний вопрос."}
         </p>
       </div>
+
+      {hasSpeechSynthesis && (
+        <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+          <p className="text-xs font-medium text-slate-600 mb-2">Прокрутка рассказа</p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handleTtsPlay(lastAssistantText, activeTtsId)}
+              disabled={!canControlTts || status === "thinking"}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-40"
+              title="Слушать с выбранного места"
+            >
+              ▶
+            </button>
+            <button
+              type="button"
+              onClick={handleTtsStop}
+              disabled={playingTtsId !== activeTtsId}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-xs font-semibold text-slate-800 transition hover:bg-slate-100 disabled:opacity-40"
+              title="Стоп"
+            >
+              ⏹
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={Math.round((ttsPositionById[activeTtsId] ?? 0) * 100)}
+              onChange={(e) =>
+                handleTtsSliderChange(
+                  activeTtsId,
+                  lastAssistantText,
+                  Number(e.target.value) / 100
+                )
+              }
+              disabled={!canControlTts || status === "thinking"}
+              className="min-w-0 flex-1 accent-slate-900"
+              title="Перемотка по частям текста"
+            />
+          </div>
+        </div>
+      )}
 
       <div className="mb-4 rounded-2xl bg-slate-900 px-4 py-3 text-white">
         <div className="flex items-start justify-between mb-1">
