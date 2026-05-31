@@ -3,6 +3,14 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { ROUTES } from "../../lib/constants/routes";
+import {
+  applyVoiceToUtterance,
+  cleanTextForSpeech,
+  createUtterance,
+  splitIntoSpeakSegments,
+} from "../../lib/tts/browserSpeech";
+import { loadTtsSettings } from "../../lib/tts/settings";
+import { useHybridTts } from "../../lib/tts/useHybridTts";
 
 type Message = {
   role: "user" | "assistant";
@@ -10,40 +18,6 @@ type Message = {
 };
 
 type Status = "ready" | "listening" | "thinking" | "speaking";
-
-/** Делит текст на фрагменты для TTS и «перемотки» (границы предложений / абзацев). */
-function splitIntoSpeakSegments(text: string): string[] {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (!normalized) return [];
-  const parts = normalized
-    .split(/(?<=[.!?…])\s+|\n+/)
-    .map((s) => s.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
-  return parts.length ? parts : [normalized];
-}
-
-function cleanTextForSpeech(text: string): string {
-  let cleaned = text;
-
-  const sourcesIndex = cleaned.indexOf("\n\nИсточники:");
-  if (sourcesIndex !== -1) {
-    cleaned = cleaned.substring(0, sourcesIndex);
-  }
-
-  cleaned = cleaned.replace(/https?:\/\/[^\s]+/gi, "");
-
-  cleaned = cleaned
-    .replace(/\*/g, "")
-    .replace(/#/g, "")
-    .replace(/_{2,}/g, "")
-    .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1")
-    .replace(/<[^>]+>/g, "")
-    .trim();
-
-  cleaned = cleaned.replace(/\n{3,}/g, "\n\n").replace(/[ \t]+/g, " ");
-
-  return cleaned;
-}
 
 export default function QuestionsPage() {
   const [status, setStatus] = useState<Status>("ready");
@@ -54,6 +28,12 @@ export default function QuestionsPage() {
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const [hasSpeechRecognition, setHasSpeechRecognition] = useState(false);
   const [hasSpeechSynthesis, setHasSpeechSynthesis] = useState(false);
+  const {
+    speak: speakHybrid,
+    stop: stopHybrid,
+    isSpeaking: isHybridSpeaking,
+    unlockAudioPlayback,
+  } = useHybridTts();
 
   /** Позиция ползунка 0–1 для каждого блока ответа (по id). */
   const [ttsPositionById, setTtsPositionById] = useState<Record<string, number>>({});
@@ -65,25 +45,18 @@ export default function QuestionsPage() {
   >(() => Promise.resolve());
 
   const applyRussianVoice = useCallback((utterance: SpeechSynthesisUtterance) => {
-    const synth = window.speechSynthesis;
-    if (!synth) return;
-    const voices = synth.getVoices();
-    if (voices.length === 0) return;
-    const russianVoice =
-      voices.find(
-        (v) => v.lang.startsWith("ru") && (v.name.includes("женск") || v.name.includes("Female"))
-      ) || voices.find((v) => v.lang.startsWith("ru"));
-    if (russianVoice) utterance.voice = russianVoice;
+    applyVoiceToUtterance(utterance, { mode: "preferFemaleRu" });
   }, []);
 
   const stopSpeaking = useCallback(() => {
     playingTtsIdRef.current = null;
     setPlayingTtsId(null);
+    stopHybrid();
     if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
     setStatus("ready");
-  }, []);
+  }, [stopHybrid]);
 
   /**
    * Озвучка с перемоткой: играет сегменты с startIndex.
@@ -124,11 +97,12 @@ export default function QuestionsPage() {
           return;
         }
 
-        const utterance = new SpeechSynthesisUtterance(segments[i]);
-        utterance.lang = "ru-RU";
-        utterance.rate = 0.85;
-        utterance.pitch = 1.15;
-        utterance.volume = 0.95;
+        const utterance = createUtterance(segments[i], {
+          lang: "ru-RU",
+          rate: 0.85,
+          pitch: 1.15,
+          volume: 0.95,
+        });
 
         const trySpeak = () => {
           applyRussianVoice(utterance);
@@ -199,7 +173,7 @@ export default function QuestionsPage() {
     }
   };
 
-  const handleSendMessage = async (text: string, source: "text" | "voice" = "text") => {
+  const handleSendMessage = async (text: string) => {
     if (!text.trim()) return;
 
     const userMessage: Message = { role: "user", content: text };
@@ -238,14 +212,35 @@ export default function QuestionsPage() {
       const assistantIdx = updated.length - 1;
       const ttsId = `m-${assistantIdx}`;
 
-      const canTts =
-        typeof window !== "undefined" && "speechSynthesis" in window && !!window.speechSynthesis;
-      if (canTts) {
-        setTtsPositionById((prev) => ({ ...prev, [ttsId]: 0 }));
-        setTimeout(() => {
+      const tts = loadTtsSettings();
+      const useCloudTts = tts.provider === "openai" || tts.provider === "azure";
+      const canBrowserTts =
+        tts.provider === "browser" &&
+        typeof window !== "undefined" &&
+        "speechSynthesis" in window &&
+        !!window.speechSynthesis;
+
+      setTtsPositionById((prev) => ({ ...prev, [ttsId]: 0 }));
+
+      setTimeout(() => {
+        if (useCloudTts) {
+          setStatus("speaking");
+          void speakHybrid(assistantText, {
+            provider: tts.provider,
+            openAiVoice: tts.openAiVoice,
+            azureVoice: tts.azureVoice,
+            browserVoiceUri: tts.browserVoiceUri || undefined,
+            voiceMode: "preferFemaleRu",
+            format: "mp3",
+          })
+            .catch((err) => console.error("Cloud TTS failed:", err))
+            .finally(() => setStatus("ready"));
+          return;
+        }
+        if (canBrowserTts) {
           playSegmentsFrom(assistantText, ttsId, 0);
-        }, 300);
-      }
+        }
+      }, 300);
     } catch (error) {
       console.error("Chat error:", error);
       setStatus("ready");
@@ -271,9 +266,9 @@ export default function QuestionsPage() {
     setHasSpeechSynthesis(speechSynthesisAvailable);
 
     if (speechRecognitionAvailable) {
-      const SpeechRecognition =
-        window.SpeechRecognition || (window as any).webkitSpeechRecognition;
-      recognitionRef.current = new SpeechRecognition();
+      const SpeechRecognitionCtor =
+        window.SpeechRecognition ?? window.webkitSpeechRecognition;
+      recognitionRef.current = new SpeechRecognitionCtor();
       recognitionRef.current.continuous = false;
       recognitionRef.current.interimResults = false;
       recognitionRef.current.lang = "ru-RU";
@@ -288,7 +283,7 @@ export default function QuestionsPage() {
         void handleSendMessageRef.current(transcript, "voice");
       };
 
-      recognitionRef.current.onerror = (event: any) => {
+      recognitionRef.current.onerror = (event: SpeechRecognitionErrorEvent) => {
         console.error("Speech recognition error:", event.error);
         setStatus("ready");
         if (event.error === "not-allowed") {
@@ -334,8 +329,9 @@ export default function QuestionsPage() {
 
       try {
         recognitionRef.current.start();
-      } catch (error: any) {
-        if (error?.message?.includes("already started") || error?.message?.includes("started")) {
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error ?? "");
+        if (message.includes("already started") || message.includes("started")) {
           return;
         }
         console.error("Failed to start recognition:", error);
@@ -357,6 +353,25 @@ export default function QuestionsPage() {
 
   const activeTtsId = messages.length > 0 ? `m-${messages.length - 1}` : "solo";
   const canControlTts = Boolean(lastAssistantText.trim());
+  const ttsSettings = loadTtsSettings();
+  const useCloudTts = ttsSettings.provider === "openai" || ttsSettings.provider === "azure";
+  const showSegmentScrubber = ttsSettings.provider === "browser" && hasSpeechSynthesis;
+
+  const handleCloudTtsPlay = () => {
+    if (!canControlTts) return;
+    unlockAudioPlayback();
+    setStatus("speaking");
+    void speakHybrid(lastAssistantText, {
+      provider: ttsSettings.provider,
+      openAiVoice: ttsSettings.openAiVoice,
+      azureVoice: ttsSettings.azureVoice,
+      browserVoiceUri: ttsSettings.browserVoiceUri || undefined,
+      voiceMode: "preferFemaleRu",
+      format: "mp3",
+    })
+      .catch((err) => console.error("Cloud TTS play failed:", err))
+      .finally(() => setStatus("ready"));
+  };
 
   return (
     <main className="flex min-h-[640px] w-full max-w-[390px] flex-col rounded-[32px] bg-white px-5 pb-4 pt-6 shadow-[0_18px_45px_rgba(15,23,42,0.12)] border border-slate-200">
@@ -403,46 +418,57 @@ export default function QuestionsPage() {
         </p>
       </div>
 
-      {hasSpeechSynthesis && (
+      {(showSegmentScrubber || useCloudTts) && (
         <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-          <p className="text-xs font-medium text-slate-600 mb-2">Прокрутка рассказа</p>
+          <p className="text-xs font-medium text-slate-600 mb-2">
+            {showSegmentScrubber ? "Прокрутка рассказа" : "Озвучка ответа"}
+          </p>
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => handleTtsPlay(lastAssistantText, activeTtsId)}
+              onClick={() =>
+                useCloudTts ? handleCloudTtsPlay() : handleTtsPlay(lastAssistantText, activeTtsId)
+              }
               disabled={!canControlTts || status === "thinking"}
               className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-40"
-              title="Слушать с выбранного места"
+              title={useCloudTts ? "Слушать ответ" : "Слушать с выбранного места"}
             >
               ▶
             </button>
             <button
               type="button"
               onClick={handleTtsStop}
-              disabled={playingTtsId !== activeTtsId}
+              disabled={useCloudTts ? !isHybridSpeaking : playingTtsId !== activeTtsId}
               className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-xs font-semibold text-slate-800 transition hover:bg-slate-100 disabled:opacity-40"
               title="Стоп"
             >
               ⏹
             </button>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              step={1}
-              value={Math.round((ttsPositionById[activeTtsId] ?? 0) * 100)}
-              onChange={(e) =>
-                handleTtsSliderChange(
-                  activeTtsId,
-                  lastAssistantText,
-                  Number(e.target.value) / 100
-                )
-              }
-              disabled={!canControlTts || status === "thinking"}
-              className="min-w-0 flex-1 accent-slate-900"
-              title="Перемотка по частям текста"
-            />
+            {showSegmentScrubber && (
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={Math.round((ttsPositionById[activeTtsId] ?? 0) * 100)}
+                onChange={(e) =>
+                  handleTtsSliderChange(
+                    activeTtsId,
+                    lastAssistantText,
+                    Number(e.target.value) / 100
+                  )
+                }
+                disabled={!canControlTts || status === "thinking"}
+                className="min-w-0 flex-1 accent-slate-900"
+                title="Перемотка по частям текста"
+              />
+            )}
           </div>
+          {useCloudTts && (
+            <p className="mt-2 text-xs text-slate-500">
+              Перемотка по фразам доступна в режиме «Браузер» в настройках.
+            </p>
+          )}
         </div>
       )}
 

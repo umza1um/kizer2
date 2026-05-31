@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import Link from "next/link";
 import { ROUTES } from "../../lib/constants/routes";
+import { loadTtsSettings } from "../../lib/tts/settings";
+import { useHybridTts } from "../../lib/tts/useHybridTts";
 
 type Message = {
   role: "user" | "assistant";
@@ -107,12 +109,10 @@ export default function PhotoPage() {
   const [error, setError] = useState<string | null>(null);
   const captureInputRef = useRef<HTMLInputElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
-  const synthesisRef = useRef<SpeechSynthesis | null>(null);
-  const hasSpeechSynthesis = typeof window !== "undefined" && "speechSynthesis" in window;
-
-  useEffect(() => {
-    if (hasSpeechSynthesis) synthesisRef.current = window.speechSynthesis;
-  }, [hasSpeechSynthesis]);
+  const { canUseBrowserSpeech, speak, unlockAudioPlayback } = useHybridTts();
+  const selectedProvider = loadTtsSettings().provider;
+  const canSpeak =
+    canUseBrowserSpeech || selectedProvider === "openai" || selectedProvider === "azure";
 
   const handleImageSelect = async (file: File | null) => {
     if (!file) return;
@@ -214,22 +214,20 @@ export default function PhotoPage() {
     e.target.value = "";
   };
 
-  const speakText = (text: string) => {
-    if (!hasSpeechSynthesis || !synthesisRef.current) return;
-    synthesisRef.current.cancel();
-    let cleaned = text;
-    const idx = cleaned.indexOf("\n\nИсточники:");
-    if (idx !== -1) cleaned = cleaned.substring(0, idx);
-    cleaned = cleaned.replace(/\*/g, "").replace(/https?:\/\/[^\s]+/gi, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").trim();
-    if (!cleaned) return;
-    const u = new SpeechSynthesisUtterance(cleaned);
-    u.lang = "ru-RU";
-    u.rate = 0.85;
-    u.pitch = 1.15;
-    const voices = synthesisRef.current.getVoices();
-    const ru = voices.find((v) => v.lang.startsWith("ru"));
-    if (ru) u.voice = ru;
-    synthesisRef.current.speak(u);
+  const speakText = async (text: string) => {
+    const tts = loadTtsSettings();
+    try {
+      await speak(text, {
+        provider: tts.provider,
+        voiceMode: "anyRu",
+        openAiVoice: tts.openAiVoice,
+        azureVoice: tts.azureVoice,
+        browserVoiceUri: tts.browserVoiceUri || undefined,
+        format: "mp3",
+      });
+    } catch (e) {
+      console.error("Failed to speak text:", e);
+    }
   };
 
   const handleSendMessage = async (text: string) => {
@@ -261,7 +259,11 @@ export default function PhotoPage() {
       const assistantText = data.tourText || data.title || "Извините, не удалось получить ответ.";
       setMessages([...newMessages, { role: "assistant" as const, content: assistantText }].slice(-12));
       setStatus("ready");
-      if (hasSpeechSynthesis) setTimeout(() => speakText(assistantText), 300);
+      if (canSpeak) {
+        setTimeout(() => {
+          void speakText(assistantText);
+        }, 300);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка");
       setStatus("ready");
@@ -405,8 +407,16 @@ export default function PhotoPage() {
             >
               <div className="flex items-start justify-between gap-2">
                 <p className="text-xs flex-1">{msg.content}</p>
-                {msg.role === "assistant" && hasSpeechSynthesis && (
-                  <button onClick={() => speakText(msg.content)} className="text-sm hover:opacity-70 flex-shrink-0" title="Озвучить" disabled={status === "thinking"}>
+                {msg.role === "assistant" && canSpeak && (
+                  <button
+                    onClick={() => {
+                      unlockAudioPlayback();
+                      void speakText(msg.content);
+                    }}
+                    className="text-sm hover:opacity-70 flex-shrink-0"
+                    title="Озвучить"
+                    disabled={status === "thinking"}
+                  >
                     🔊
                   </button>
                 )}
