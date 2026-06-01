@@ -163,3 +163,43 @@ export async function playMp3Blob(blob: Blob): Promise<HTMLAudioElement> {
 export function revokeSharedObjectUrlOnEnd(): void {
   revokeSharedObjectUrl();
 }
+
+/** Воспроизвести blob и дождаться конца (для цепочки фраз). */
+export async function playMp3BlobAndWait(blob: Blob): Promise<void> {
+  const audio = await playMp3Blob(blob);
+
+  await new Promise<void>((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      reject(new Error("Таймаут воспроизведения"));
+    }, 120_000);
+
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      audio.removeEventListener("ended", onEnded);
+      audio.removeEventListener("error", onError);
+    };
+
+    const onEnded = () => {
+      cleanup();
+      revokeSharedObjectUrlOnEnd();
+      resolve();
+    };
+
+    const onError = () => {
+      cleanup();
+      revokeSharedObjectUrlOnEnd();
+      reject(new Error("Ошибка воспроизведения"));
+    };
+
+    if (audio.ended) {
+      cleanup();
+      revokeSharedObjectUrlOnEnd();
+      resolve();
+      return;
+    }
+
+    audio.addEventListener("ended", onEnded, { once: true });
+    audio.addEventListener("error", onError, { once: true });
+  });
+}

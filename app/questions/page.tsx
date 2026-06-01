@@ -10,7 +10,7 @@ import {
   splitIntoSpeakSegments,
 } from "../../lib/tts/browserSpeech";
 import { loadTtsSettings } from "../../lib/tts/settings";
-import { useHybridTts } from "../../lib/tts/useHybridTts";
+import { prefetchTts, useHybridTts } from "../../lib/tts/useHybridTts";
 
 type Message = {
   role: "user" | "assistant";
@@ -222,25 +222,31 @@ export default function QuestionsPage() {
 
       setTtsPositionById((prev) => ({ ...prev, [ttsId]: 0 }));
 
-      setTimeout(() => {
-        if (useCloudTts) {
-          setStatus("speaking");
-          void speakHybrid(assistantText, {
-            provider: tts.provider,
-            openAiVoice: tts.openAiVoice,
-            azureVoice: tts.azureVoice,
-            browserVoiceUri: tts.browserVoiceUri || undefined,
-            voiceMode: "preferFemaleRu",
-            format: "mp3",
+      if (useCloudTts) {
+        prefetchTts(assistantText, {
+          provider: tts.provider,
+          openAiVoice: tts.openAiVoice,
+          azureVoice: tts.azureVoice,
+        });
+        setStatus("speaking");
+        void speakHybrid(assistantText, {
+          provider: tts.provider,
+          openAiVoice: tts.openAiVoice,
+          azureVoice: tts.azureVoice,
+          browserVoiceUri: tts.browserVoiceUri || undefined,
+          voiceMode: "preferFemaleRu",
+          format: "mp3",
+          speed: tts.speechSpeed,
+        })
+          .catch((err) => {
+            console.error("Cloud TTS failed:", err);
+            const msg = err instanceof Error ? err.message : "Озвучка недоступна";
+            alert(msg);
           })
-            .catch((err) => console.error("Cloud TTS failed:", err))
-            .finally(() => setStatus("ready"));
-          return;
-        }
-        if (canBrowserTts) {
-          playSegmentsFrom(assistantText, ttsId, 0);
-        }
-      }, 300);
+          .finally(() => setStatus("ready"));
+      } else if (canBrowserTts) {
+        playSegmentsFrom(assistantText, ttsId, 0);
+      }
     } catch (error) {
       console.error("Chat error:", error);
       setStatus("ready");
@@ -368,6 +374,7 @@ export default function QuestionsPage() {
       browserVoiceUri: ttsSettings.browserVoiceUri || undefined,
       voiceMode: "preferFemaleRu",
       format: "mp3",
+      speed: ttsSettings.speechSpeed,
     })
       .catch((err) => console.error("Cloud TTS play failed:", err))
       .finally(() => setStatus("ready"));

@@ -16,10 +16,20 @@ export type OpenAiTtsVoice =
   | "sage"
   | "shimmer";
 
+/** Скорость нейросетевой озвучки (1 = норма, до ~1.35 комфортно). */
+export type TtsSpeechSpeed = 1 | 1.15 | 1.3;
+
+export const TTS_SPEED_OPTIONS: { value: TtsSpeechSpeed; label: string }[] = [
+  { value: 1, label: "Обычная" },
+  { value: 1.15, label: "Быстрая" },
+  { value: 1.3, label: "Очень быстрая" },
+];
+
 export type TtsSettings = {
   provider: TtsProvider;
   openAiVoice: OpenAiTtsVoice;
   azureVoice: AzureTtsVoice;
+  speechSpeed: TtsSpeechSpeed;
   /** Пустая строка — автоматический выбор русского голоса в браузере. */
   browserVoiceUri: string;
 };
@@ -46,8 +56,19 @@ const DEFAULT_SETTINGS: TtsSettings = {
   provider: "azure",
   openAiVoice: "nova",
   azureVoice: "ru-RU-SvetlanaNeural",
+  speechSpeed: 1.15,
   browserVoiceUri: "",
 };
+
+function parseSpeechSpeed(value: unknown, fallback: TtsSpeechSpeed): TtsSpeechSpeed {
+  if (value === 1 || value === 1.15 || value === 1.3) return value;
+  if (typeof value === "number" && value >= 0.9 && value <= 1.5) {
+    if (value <= 1.05) return 1;
+    if (value <= 1.22) return 1.15;
+    return 1.3;
+  }
+  return fallback;
+}
 
 function envDefaultProvider(): TtsProvider | null {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_TTS_PROVIDER === "openai") {
@@ -114,6 +135,7 @@ export function loadTtsSettings(): TtsSettings {
         AZURE_TTS_VOICES.some((v) => v.id === p.azureVoice) && p.azureVoice
           ? p.azureVoice
           : defaults.azureVoice,
+      speechSpeed: parseSpeechSpeed(p.speechSpeed, defaults.speechSpeed),
       browserVoiceUri: typeof p.browserVoiceUri === "string" ? p.browserVoiceUri : "",
     };
 

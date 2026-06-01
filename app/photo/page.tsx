@@ -4,7 +4,7 @@ import { useState, useRef } from "react";
 import Link from "next/link";
 import { ROUTES } from "../../lib/constants/routes";
 import { loadTtsSettings } from "../../lib/tts/settings";
-import { useHybridTts } from "../../lib/tts/useHybridTts";
+import { prefetchTts, useHybridTts } from "../../lib/tts/useHybridTts";
 
 type Message = {
   role: "user" | "assistant";
@@ -224,6 +224,7 @@ export default function PhotoPage() {
         azureVoice: tts.azureVoice,
         browserVoiceUri: tts.browserVoiceUri || undefined,
         format: "mp3",
+        speed: tts.speechSpeed,
       });
     } catch (e) {
       console.error("Failed to speak text:", e);
@@ -260,9 +261,15 @@ export default function PhotoPage() {
       setMessages([...newMessages, { role: "assistant" as const, content: assistantText }].slice(-12));
       setStatus("ready");
       if (canSpeak) {
-        setTimeout(() => {
-          void speakText(assistantText);
-        }, 300);
+        const tts = loadTtsSettings();
+        if (tts.provider === "openai" || tts.provider === "azure") {
+          prefetchTts(assistantText, {
+            provider: tts.provider,
+            openAiVoice: tts.openAiVoice,
+            azureVoice: tts.azureVoice,
+          });
+        }
+        void speakText(assistantText);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка");

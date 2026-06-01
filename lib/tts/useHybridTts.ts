@@ -4,8 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   isPlaybackError,
   pauseSharedAudio,
-  playMp3Blob,
-  revokeSharedObjectUrlOnEnd,
+  playMp3BlobAndWait,
   unlockAudioPlayback,
 } from "./audioPlayback";
 import {
@@ -17,6 +16,8 @@ import {
   waitForBrowserVoices,
   VoicePickMode,
 } from "./browserSpeech";
+import { chunkTextForTts, shouldUseChunkedTts } from "./chunkText";
+import { fetchCloudTtsBlob, prefetchCloudTts } from "./cloudTtsClient";
 import { shouldUseCloudTtsOnly } from "./platform";
 import {
   AZURE_TTS_VOICES,
@@ -45,19 +46,50 @@ function canUseBrowserSpeech(): boolean {
   return typeof window !== "undefined" && "speechSynthesis" in window && !!window.speechSynthesis;
 }
 
+export function prefetchTts(text: string, options?: SpeakOptions): void {
+  const saved = loadTtsSettings();
+  let provider = options?.provider ?? saved.provider;
+  if (shouldUseCloudTtsOnly() && provider === "browser") provider = "azure";
+  if (provider !== "azure" && provider !== "openai") return;
+
+  const cleaned = cleanTextForSpeech(text);
+  if (!cleaned) return;
+
+  const cloudProvider = provider === "azure" ? "azure" : "openai";
+  const azureVoice = options?.azureVoice ?? saved.azureVoice;
+  const openAiVoice = options?.openAiVoice ?? saved.openAiVoice;
+  const voice =
+    cloudProvider === "azure"
+      ? AZURE_TTS_VOICES.some((v) => v.id === azureVoice)
+        ? azureVoice
+        : "ru-RU-SvetlanaNeural"
+      : openAiVoice;
+  const speed = options?.speed ?? saved.speechSpeed ?? 1.15;
+
+  const chunks = shouldUseChunkedTts(cleaned) ? chunkTextForTts(cleaned) : [cleaned];
+  if (chunks[0]) prefetchCloudTts({ provider: cloudProvider, voice, text: chunks[0], speed });
+  if (chunks[1]) prefetchCloudTts({ provider: cloudProvider, voice, text: chunks[1], speed });
+}
+
 export function useHybridTts(defaultProvider: TtsProvider = "azure") {
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const browserEndCleanupRef = useRef<(() => void) | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const speakGenRef = useRef(0);
 
-  const stop = useCallback(() => {
+  const cancelOngoing = useCallback(() => {
+    speakGenRef.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
     if (canUseBrowserSpeech()) {
       window.speechSynthesis.cancel();
     }
     pauseSharedAudio();
-    browserEndCleanupRef.current?.();
-    browserEndCleanupRef.current = null;
     setIsSpeaking(false);
   }, []);
+
+  const stop = useCallback(() => {
+    cancelOngoing();
+  }, [cancelOngoing]);
 
   const speakWithBrowser = useCallback(
     async (text: string, voiceMode: VoicePickMode = "anyRu", browserVoiceUri?: string) => {
@@ -78,7 +110,10 @@ export function useHybridTts(defaultProvider: TtsProvider = "azure") {
         );
       }
 
-      const utterance = createUtterance(cleaned, { lang: "ru-RU", rate: 0.85, pitch: 1.15 });
+      const saved = loadTtsSettings();
+      const rate = Math.min(1.4, (saved.speechSpeed ?? 1.15) * 0.9);
+
+      const utterance = createUtterance(cleaned, { lang: "ru-RU", rate, pitch: 1.12 });
       applyVoiceToUtterance(utterance, {
         mode: voiceMode,
         voices,
@@ -106,69 +141,66 @@ export function useHybridTts(defaultProvider: TtsProvider = "azure") {
     [],
   );
 
-  const speakWithCloudApi = useCallback(async (text: string, options?: SpeakOptions) => {
-    const cleaned = cleanTextForSpeech(text);
-    if (!cleaned) return;
+  const speakWithCloudApi = useCallback(
+    async (text: string, options?: SpeakOptions, generation?: number) => {
+      const cleaned = cleanTextForSpeech(text);
+      if (!cleaned) return;
 
-    const provider: Exclude<TtsProvider, "browser"> =
-      options?.provider === "azure" ? "azure" : "openai";
-    const selectedAzureVoice =
-      options?.azureVoice && AZURE_TTS_VOICES.some((v) => v.id === options.azureVoice)
-        ? options.azureVoice
-        : "ru-RU-SvetlanaNeural";
-    const selectedVoice = provider === "azure" ? selectedAzureVoice : options?.openAiVoice ?? "nova";
+      const saved = loadTtsSettings();
+      const provider: Exclude<TtsProvider, "browser"> =
+        options?.provider === "azure" ? "azure" : "openai";
+      const azureVoice = options?.azureVoice ?? saved.azureVoice;
+      const openAiVoice = options?.openAiVoice ?? saved.openAiVoice;
+      const selectedAzureVoice =
+        AZURE_TTS_VOICES.some((v) => v.id === azureVoice) ? azureVoice : "ru-RU-SvetlanaNeural";
+      const selectedVoice = provider === "azure" ? selectedAzureVoice : openAiVoice ?? "nova";
+      const speed = options?.speed ?? saved.speechSpeed ?? 1.15;
 
-    const res = await fetch("/api/tts/speak", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        provider,
-        text: cleaned,
-        voice: selectedVoice,
-        model: "gpt-4o-mini-tts",
-        format: options?.format ?? "mp3",
-        speed: options?.speed,
-      }),
-    });
+      const chunks = shouldUseChunkedTts(cleaned) ? chunkTextForTts(cleaned) : [cleaned];
+      const abort = new AbortController();
+      abortRef.current = abort;
 
-    if (!res.ok) {
-      let errorText = `${provider.toUpperCase()} TTS failed`;
+      setIsSpeaking(true);
+
       try {
-        const payload: unknown = await res.json();
-        if (
-          typeof payload === "object" &&
-          payload !== null &&
-          "error" in payload &&
-          typeof (payload as { error?: unknown }).error === "string"
-        ) {
-          errorText = (payload as { error: string }).error;
+        for (let i = 0; i < chunks.length; i++) {
+          if (generation !== undefined && generation !== speakGenRef.current) return;
+          if (abort.signal.aborted) return;
+
+          const chunk = chunks[i];
+          const nextChunk = chunks[i + 1];
+
+          if (nextChunk) {
+            prefetchCloudTts({
+              provider,
+              voice: selectedVoice,
+              text: nextChunk,
+              speed,
+            });
+          }
+
+          const blob = await fetchCloudTtsBlob({
+            provider,
+            voice: selectedVoice,
+            text: chunk,
+            speed,
+            signal: abort.signal,
+          });
+
+          if (generation !== undefined && generation !== speakGenRef.current) return;
+          if (abort.signal.aborted) return;
+
+          await playMp3BlobAndWait(blob);
         }
-      } catch {
-        // ignore JSON parse errors
+      } finally {
+        if (abortRef.current === abort) abortRef.current = null;
+        if (generation === undefined || generation === speakGenRef.current) {
+          setIsSpeaking(false);
+        }
       }
-      throw new Error(errorText);
-    }
-
-    const blob = await res.blob();
-    const audio = await playMp3Blob(blob);
-
-    setIsSpeaking(true);
-
-    await new Promise<void>((resolve) => {
-      const onEnd = () => {
-        cleanup();
-        setIsSpeaking(false);
-        resolve();
-      };
-      const cleanup = () => {
-        audio.removeEventListener("ended", onEnd);
-        audio.removeEventListener("pause", onEnd);
-        revokeSharedObjectUrlOnEnd();
-      };
-      audio.addEventListener("ended", onEnd, { once: true });
-      audio.addEventListener("pause", onEnd, { once: true });
-    });
-  }, []);
+    },
+    [],
+  );
 
   const speak = useCallback(
     async (text: string, options?: SpeakOptions) => {
@@ -182,7 +214,11 @@ export function useHybridTts(defaultProvider: TtsProvider = "azure") {
       const azureVoice = options?.azureVoice ?? saved.azureVoice;
       const browserVoiceUri = options?.browserVoiceUri ?? saved.browserVoiceUri;
       const voiceMode = options?.voiceMode ?? "anyRu";
+      const speed = options?.speed ?? saved.speechSpeed ?? 1.15;
 
+      const generation = ++speakGenRef.current;
+      abortRef.current?.abort();
+      abortRef.current = null;
       pauseSharedAudio();
       if (canUseBrowserSpeech()) {
         window.speechSynthesis.cancel();
@@ -190,11 +226,16 @@ export function useHybridTts(defaultProvider: TtsProvider = "azure") {
 
       try {
         if (provider === "openai" || provider === "azure") {
-          await speakWithCloudApi(text, { ...options, provider, openAiVoice, azureVoice });
+          await speakWithCloudApi(text, { ...options, provider, openAiVoice, azureVoice, speed }, generation);
           return;
         }
         await speakWithBrowser(text, voiceMode, browserVoiceUri);
       } catch (error) {
+        if (generation !== speakGenRef.current) return;
+
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (error instanceof Error && error.name === "AbortError") return;
+
         const allowBrowserFallback =
           !shouldUseCloudTtsOnly() &&
           (provider === "openai" || provider === "azure") &&
@@ -214,7 +255,7 @@ export function useHybridTts(defaultProvider: TtsProvider = "azure") {
 
   const getSettings = useCallback((): TtsSettings => loadTtsSettings(), []);
 
-  useEffect(() => () => stop(), [stop]);
+  useEffect(() => () => cancelOngoing(), [cancelOngoing]);
 
   return {
     canUseBrowserSpeech: canUseBrowserSpeech(),
@@ -223,5 +264,6 @@ export function useHybridTts(defaultProvider: TtsProvider = "azure") {
     stop,
     getSettings,
     unlockAudioPlayback,
+    prefetchTts,
   };
 }

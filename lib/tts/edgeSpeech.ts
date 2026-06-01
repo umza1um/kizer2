@@ -23,7 +23,7 @@ export async function synthesizeWithEdgeSpeech(
         ? speed <= 1.5
           ? speed
           : Math.min(2, speed)
-        : 0.92;
+        : 1.15;
     const { audioStream } = tts.toStream(text, { rate });
     const buffer = await streamToBuffer(audioStream);
     const out = new Uint8Array(buffer.byteLength);
