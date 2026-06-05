@@ -4,6 +4,8 @@
  * RU: Временное хранилище изображений для Google Lens. EN: Temporary image store for Google Lens.
  */
 
+import { getPublicBaseUrl } from "./env/publicBaseUrl";
+
 const TTL_MS = 15 * 60 * 1000; // 15 min
 
 type Entry = {
@@ -42,7 +44,7 @@ export function getImage(id: string): { buffer: Buffer; mime: string } | null {
 }
 
 export function makePublicImageUrl(id: string): string | null {
-  const base = process.env.PUBLIC_BASE_URL?.trim();
+  const base = getPublicBaseUrl();
   if (!base) return null;
-  return `${base.replace(/\/$/, "")}/api/photo/image/${id}`;
+  return `${base}/api/photo/image/${id}`;
 }

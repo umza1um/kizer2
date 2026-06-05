@@ -27,6 +27,8 @@ export default function AdminPage() {
   const [apiKeyStatus, setApiKeyStatus] = useState<"configured" | "not configured">("not configured");
   const [searchProvider, setSearchProvider] = useState<string>("serpapi");
   const [searchKeyStatus, setSearchKeyStatus] = useState<"configured" | "not configured">("not configured");
+  const [lensStatus, setLensStatus] = useState<"configured" | "not configured">("not configured");
+  const [publicBaseUrl, setPublicBaseUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -45,6 +47,8 @@ export default function AdminPage() {
       setApiKeyStatus(data.apiKeyStatus);
       setSearchProvider(data.searchProvider ?? "serpapi");
       setSearchKeyStatus(data.searchKeyStatus ?? "not configured");
+      setLensStatus(data.lensStatus ?? "not configured");
+      setPublicBaseUrl(data.publicBaseUrl ?? null);
     } catch (error) {
       console.error("Failed to load config:", error);
       setMessage({ type: "error", text: "Не удалось загрузить конфигурацию" });
@@ -148,8 +152,21 @@ export default function AdminPage() {
             {searchKeyStatus === "configured" ? "configured" : "not configured"}
           </span>
         </p>
+        <p className="text-xs text-slate-500 mb-2">
+          {searchProvider === "duckduckgo"
+            ? "Веб-поиск: встроенный DuckDuckGo (без ключа). Для Google Lens нужен SERPAPI_API_KEY."
+            : "SERPAPI_API_KEY или BING_SEARCH_API_KEY в .env.local / Vercel"}
+        </p>
+        <p className="text-sm text-slate-600 mb-2">
+          Google Lens:{" "}
+          <span className={lensStatus === "configured" ? "text-green-600" : "text-amber-600"}>
+            {lensStatus === "configured" ? "configured" : "not configured"}
+          </span>
+        </p>
         <p className="text-xs text-slate-500 mb-3">
-          SERPAPI_API_KEY или BING_SEARCH_API_KEY в .env.local
+          {publicBaseUrl
+            ? `Публичный URL: ${publicBaseUrl}`
+            : "PUBLIC_BASE_URL подставляется автоматически на Vercel"}
         </p>
         <button
           onClick={handleCheckKey}

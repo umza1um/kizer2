@@ -1,21 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadPrompts, savePrompts, type PromptsConfig } from "../../../../lib/config/prompts";
+import { getPublicBaseUrl } from "../../../../lib/env/publicBaseUrl";
+import { getSearchProvider, isSearchConfigured } from "../../../../lib/search/config";
 
 export async function GET() {
   try {
     const config = loadPrompts();
     const hasApiKey = !!process.env.OPENAI_API_KEY;
-    const searchProvider = process.env.SEARCH_PROVIDER || "serpapi";
-    const searchKeyConfigured = !!(
-      (searchProvider === "serpapi" && process.env.SERPAPI_API_KEY) ||
-      (searchProvider === "bing" && process.env.BING_SEARCH_API_KEY)
-    );
+    const searchProvider = getSearchProvider();
+    const searchKeyConfigured = isSearchConfigured();
+    const publicBaseUrl = getPublicBaseUrl();
+    const lensReady = !!process.env.SERPAPI_API_KEY?.trim() && !!publicBaseUrl;
 
     return NextResponse.json({
       config,
       apiKeyStatus: hasApiKey ? "configured" : "not configured",
       searchProvider,
       searchKeyStatus: searchKeyConfigured ? "configured" : "not configured",
+      publicBaseUrl: publicBaseUrl ?? null,
+      lensStatus: lensReady ? "configured" : "not configured",
     });
   } catch (error) {
     console.error("Failed to load prompts:", error);

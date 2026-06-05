@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getSearchProvider } from "../../../../lib/search/config";
+import { searchDuckDuckGo } from "../../../../lib/search/duckduckgo";
 import { searchSerpApi } from "../../../../lib/search/serpapi";
 
 export type WebSearchItem = { title: string; snippet: string; url: string };
@@ -30,13 +32,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ results: cached.data });
     }
 
-    const apiKey = process.env.SERPAPI_API_KEY;
-    if (!apiKey || !apiKey.trim()) {
-      return NextResponse.json(
-        { error: "SERPAPI_API_KEY is not configured" },
-        { status: 503 }
-      );
-    }
+    const provider = getSearchProvider();
+    const serpApiKey = process.env.SERPAPI_API_KEY?.trim();
 
     const results: WebSearchResult[] = [];
     const maxQueries = Math.min(queries.length, 5);
@@ -44,10 +41,13 @@ export async function POST(request: NextRequest) {
       const q = String(queries[i]).trim();
       if (!q) continue;
       try {
-        const items = await searchSerpApi(q, apiKey);
+        const items =
+          provider === "serpapi" && serpApiKey
+            ? await searchSerpApi(q, serpApiKey)
+            : await searchDuckDuckGo(q);
         results.push({ query: q, items });
       } catch (err) {
-        console.warn("SerpAPI query failed:", q, err);
+        console.warn(`${provider} query failed:`, q, err);
         results.push({ query: q, items: [] });
       }
     }
