@@ -4,6 +4,11 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Кизер — ИИ-экскурсовод",
   description: "Минимальный прототип мобильного интерфейса «Кизер — ИИ-экскурсовод».",
+  viewport: {
+    width: "device-width",
+    initialScale: 1,
+    viewportFit: "cover",
+  },
 };
 
 export default function RootLayout({
