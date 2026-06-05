@@ -2,6 +2,7 @@
 
 import { useState, useRef } from "react";
 import Link from "next/link";
+import { ThinkingIndicator } from "../../components/ui/ThinkingIndicator";
 import { ROUTES } from "../../lib/constants/routes";
 import { loadTtsSettings } from "../../lib/tts/settings";
 import { prefetchTts, useHybridTts } from "../../lib/tts/useHybridTts";
@@ -97,6 +98,20 @@ function optimizeImage(file: File): Promise<string> {
   });
 }
 
+type PhotoStatus = "ready" | "identify" | "lens" | "resolve" | "tour" | "thinking";
+
+const PHOTO_LOADING_MESSAGE: Record<Exclude<PhotoStatus, "ready">, string> = {
+  thinking: "собираюсь с мыслями",
+  identify: "Определяю объект...",
+  lens: "Ищу совпадения...",
+  resolve: "Проверяю совпадения...",
+  tour: "Готовлю экскурсию...",
+};
+
+function getPhotoLoadingMessage(status: PhotoStatus): string | null {
+  return status === "ready" ? null : PHOTO_LOADING_MESSAGE[status];
+}
+
 export default function PhotoPage() {
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
   const [identifyResult, setIdentifyResult] = useState<IdentifyResult | null>(null);
@@ -104,7 +119,7 @@ export default function PhotoPage() {
   const [tourResult, setTourResult] = useState<TourResult | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [userInput, setUserInput] = useState("");
-  const [status, setStatus] = useState<"ready" | "identify" | "lens" | "resolve" | "tour" | "thinking">("ready");
+  const [status, setStatus] = useState<PhotoStatus>("ready");
   const [lensDisabledReason, setLensDisabledReason] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const captureInputRef = useRef<HTMLInputElement>(null);
@@ -283,6 +298,8 @@ export default function PhotoPage() {
   const getConfidenceText = (c: string) =>
     c === "high" ? "Высокая" : c === "medium" ? "Средняя" : "Низкая";
 
+  const loadingMessage = getPhotoLoadingMessage(status);
+
   return (
     <main className="flex min-h-[640px] w-full max-w-[390px] flex-col rounded-[32px] bg-white px-5 pb-4 pt-6 shadow-[0_18px_45px_rgba(15,23,42,0.12)] border border-slate-200">
       <header className="flex items-center justify-between mb-4">
@@ -307,15 +324,8 @@ export default function PhotoPage() {
         </div>
       )}
 
-      {(status === "identify" || status === "lens" || status === "resolve" || status === "tour") && (
-        <div className="mb-4 text-center">
-          <p className="text-xs font-medium text-slate-500">
-            {status === "identify" && "Определяю объект..."}
-            {status === "lens" && "Ищу совпадения (Google Lens)..."}
-            {status === "resolve" && "Проверяю совпадения..."}
-            {status === "tour" && "Готовлю экскурсию..."}
-          </p>
-        </div>
+      {loadingMessage && status !== "thinking" && (
+        <ThinkingIndicator className="mb-4" message={loadingMessage} />
       )}
 
       {identifyResult && (
@@ -433,10 +443,8 @@ export default function PhotoPage() {
         </div>
       )}
 
-      {status === "thinking" && (
-        <div className="mb-4 text-center">
-          <p className="text-xs font-medium text-slate-500">Думаю...</p>
-        </div>
+      {status === "thinking" && loadingMessage && (
+        <ThinkingIndicator className="mb-4" message={loadingMessage} />
       )}
 
       {imageDataUrl && tourResult && (

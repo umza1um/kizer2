@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { ThinkingIndicator } from "../../components/ui/ThinkingIndicator";
 import { ROUTES } from "../../lib/constants/routes";
 import {
   applyVoiceToUtterance,
@@ -479,13 +480,18 @@ export default function QuestionsPage() {
         </div>
       )}
 
+      {status === "thinking" && <ThinkingIndicator className="mb-4" />}
+
       <div className="mb-4 rounded-2xl bg-slate-900 px-4 py-3 text-white">
         <div className="flex items-start justify-between mb-1">
           <p className="text-xs font-medium text-slate-300">Ответ Кизера:</p>
         </div>
         <div className="h-[32vh] min-h-[200px] max-h-[280px] overflow-y-auto pr-1">
           <p className="text-sm whitespace-pre-wrap">
-            {lastAssistantText || "Здесь будет отображаться последний ответ экскурсовода."}
+            {lastAssistantText ||
+              (status === "thinking"
+                ? ""
+                : "Здесь будет отображаться последний ответ экскурсовода.")}
           </p>
         </div>
       </div>

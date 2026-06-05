@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
+import { ThinkingIndicator } from "../../components/ui/ThinkingIndicator";
 import { ROUTES } from "../../lib/constants/routes";
 
 type Message = {
@@ -417,6 +418,14 @@ export default function PhotoV2Page() {
     }
   };
 
+  const pipelineLoadingMessage = loadingIdentify
+    ? "Определяю объект..."
+    : loadingResolve
+      ? "Ищу совпадения..."
+      : loadingTour
+        ? "Готовлю экскурсию..."
+        : null;
+
   return (
     <main className="flex min-h-[640px] w-full max-w-[390px] flex-col rounded-[32px] bg-white px-5 pb-4 pt-6 shadow-[0_18px_45px_rgba(15,23,42,0.12)] border border-slate-200">
       <header className="flex items-center justify-between mb-4">
@@ -472,16 +481,8 @@ export default function PhotoV2Page() {
         </div>
       )}
 
-      {loadingIdentify && (
-        <div className="mb-4 text-center">
-          <p className="text-xs font-medium text-slate-500">Определяю объект...</p>
-        </div>
-      )}
-
-      {loadingResolve && (
-        <div className="mb-4 text-center">
-          <p className="text-xs font-medium text-slate-500">Ищу совпадения по картинке (Google Lens)…</p>
-        </div>
+      {pipelineLoadingMessage && (
+        <ThinkingIndicator className="mb-4" message={pipelineLoadingMessage} />
       )}
 
       {identifyResult && (
@@ -534,12 +535,6 @@ export default function PhotoV2Page() {
               </ul>
             </div>
           )}
-        </div>
-      )}
-
-      {loadingTour && (
-        <div className="mb-4 text-center">
-          <p className="text-xs font-medium text-slate-500">Готовлю экскурсию...</p>
         </div>
       )}
 
@@ -598,9 +593,7 @@ export default function PhotoV2Page() {
       )}
 
       {loadingFollowup && (
-        <div className="mb-4 text-center">
-          <p className="text-xs font-medium text-slate-500">Думаю...</p>
-        </div>
+        <ThinkingIndicator className="mb-4" message="собираюсь с мыслями" />
       )}
 
       {tourResult && (
