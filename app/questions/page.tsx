@@ -28,6 +28,10 @@ export default function QuestionsPage() {
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const micPressedRef = useRef(false);
+  const micSessionRef = useRef(false);
+  const recognitionStartedRef = useRef(false);
+  const stopRequestedRef = useRef(false);
+  const pendingTranscriptRef = useRef("");
   const [hasSpeechRecognition, setHasSpeechRecognition] = useState(false);
   const [hasSpeechSynthesis, setHasSpeechSynthesis] = useState(false);
   const {
@@ -317,22 +321,58 @@ export default function QuestionsPage() {
       const SpeechRecognitionCtor =
         window.SpeechRecognition ?? window.webkitSpeechRecognition;
       recognitionRef.current = new SpeechRecognitionCtor();
-      recognitionRef.current.continuous = false;
-      recognitionRef.current.interimResults = false;
+      // iOS Safari: continuous + interim нужны для push-to-talk (отпускание кнопки).
+      recognitionRef.current.continuous = true;
+      recognitionRef.current.interimResults = true;
       recognitionRef.current.lang = "ru-RU";
 
+      const finishMicSession = (transcript: string) => {
+        if (!micSessionRef.current) return;
+        micSessionRef.current = false;
+        recognitionStartedRef.current = false;
+        stopRequestedRef.current = false;
+        pendingTranscriptRef.current = "";
+
+        const trimmed = transcript.trim();
+        if (trimmed) {
+          setLastUserSpeech(trimmed);
+          void handleSendMessageRef.current(trimmed, "voice");
+        }
+      };
+
       recognitionRef.current.onstart = () => {
+        recognitionStartedRef.current = true;
         setStatus("listening");
+        if (stopRequestedRef.current) {
+          window.setTimeout(() => {
+            try {
+              recognitionRef.current?.stop();
+            } catch {
+              // ignore
+            }
+          }, 80);
+        }
       };
 
       recognitionRef.current.onresult = (event: SpeechRecognitionEvent) => {
-        const transcript = event.results[0][0].transcript;
-        setLastUserSpeech(transcript);
-        void handleSendMessageRef.current(transcript, "voice");
+        let transcript = "";
+        for (let i = 0; i < event.results.length; i += 1) {
+          transcript += event.results[i][0].transcript;
+        }
+        pendingTranscriptRef.current = transcript;
+        if (transcript.trim()) {
+          setLastUserSpeech(transcript.trim());
+        }
       };
 
       recognitionRef.current.onerror = (event: SpeechRecognitionErrorEvent) => {
+        if (event.error === "aborted" || event.error === "no-speech") {
+          return;
+        }
         console.error("Speech recognition error:", event.error);
+        micSessionRef.current = false;
+        recognitionStartedRef.current = false;
+        stopRequestedRef.current = false;
         setStatus("ready");
         if (event.error === "not-allowed") {
           alert("Разрешите доступ к микрофону в настройках браузера");
@@ -340,6 +380,13 @@ export default function QuestionsPage() {
       };
 
       recognitionRef.current.onend = () => {
+        const transcript = pendingTranscriptRef.current;
+        if (stopRequestedRef.current || transcript.trim()) {
+          finishMicSession(transcript);
+        } else {
+          micSessionRef.current = false;
+          recognitionStartedRef.current = false;
+        }
         setStatus((s) => (s === "listening" ? "ready" : s));
       };
     }
@@ -354,61 +401,124 @@ export default function QuestionsPage() {
     };
   }, []);
 
+  const requestStopRecognition = useCallback(() => {
+    stopRequestedRef.current = true;
+    if (!recognitionRef.current) return;
+
+    if (recognitionStartedRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
+    // iOS: onstart ещё не пришёл — stop() вызовется в onstart.
+  }, []);
+
+  const endMicPress = useCallback(() => {
+    if (!micPressedRef.current) return;
+    micPressedRef.current = false;
+    requestStopRecognition();
+  }, [requestStopRecognition]);
+
   const startMicListening = useCallback(() => {
     if (!recognitionRef.current || !hasSpeechRecognition) return;
-    if (status === "thinking") return;
+
+    pendingTranscriptRef.current = "";
+    recognitionStartedRef.current = false;
+    stopRequestedRef.current = false;
+    micSessionRef.current = true;
 
     try {
       recognitionRef.current.start();
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error ?? "");
       if (message.includes("already started") || message.includes("started")) {
+        try {
+          recognitionRef.current.stop();
+        } catch {
+          // ignore
+        }
+        window.setTimeout(() => {
+          if (!micPressedRef.current || !recognitionRef.current) return;
+          try {
+            recognitionRef.current.start();
+          } catch {
+            micPressedRef.current = false;
+            micSessionRef.current = false;
+          }
+        }, 120);
         return;
       }
       console.error("Failed to start recognition:", error);
       micPressedRef.current = false;
+      micSessionRef.current = false;
       setStatus("ready");
     }
-  }, [hasSpeechRecognition, status]);
+  }, [hasSpeechRecognition]);
+
+  const beginMicPress = useCallback(() => {
+    if (!hasSpeechRecognition || status === "thinking" || micPressedRef.current) return;
+
+    unlockAudioPlayback();
+    micPressedRef.current = true;
+
+    const onGlobalRelease = () => endMicPress();
+    window.addEventListener("pointerup", onGlobalRelease, { once: true });
+    window.addEventListener("pointercancel", onGlobalRelease, { once: true });
+    window.addEventListener("touchend", onGlobalRelease, { once: true, passive: true });
+
+    if (status === "speaking" || isHybridSpeaking || playingTtsIdRef.current) {
+      stopSpeaking();
+      window.setTimeout(() => {
+        if (micPressedRef.current) startMicListening();
+      }, 150);
+      return;
+    }
+
+    startMicListening();
+  }, [
+    endMicPress,
+    hasSpeechRecognition,
+    isHybridSpeaking,
+    startMicListening,
+    status,
+    stopSpeaking,
+    unlockAudioPlayback,
+  ]);
 
   const handleMicPress = useCallback(
     (event: React.PointerEvent<HTMLButtonElement>) => {
       event.preventDefault();
-      if (!hasSpeechRecognition || status === "thinking") return;
-
-      unlockAudioPlayback();
-      event.currentTarget.setPointerCapture(event.pointerId);
-      micPressedRef.current = true;
-
-      if (status === "speaking" || isHybridSpeaking || playingTtsIdRef.current) {
-        stopSpeaking();
-        window.setTimeout(() => {
-          if (micPressedRef.current) startMicListening();
-        }, 150);
-        return;
-      }
-
-      startMicListening();
+      beginMicPress();
     },
-    [hasSpeechRecognition, isHybridSpeaking, startMicListening, status, stopSpeaking, unlockAudioPlayback],
+    [beginMicPress],
   );
 
   const handleMicRelease = useCallback(
     (event: React.PointerEvent<HTMLButtonElement>) => {
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }
-      if (!micPressedRef.current) return;
-      micPressedRef.current = false;
-
-      if (!recognitionRef.current) return;
-      try {
-        recognitionRef.current.stop();
-      } catch {
-        // ignore
-      }
+      event.preventDefault();
+      endMicPress();
     },
-    [],
+    [endMicPress],
+  );
+
+  const handleMicTouchStart = useCallback(
+    (event: React.TouchEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      beginMicPress();
+    },
+    [beginMicPress],
+  );
+
+  const handleMicTouchEnd = useCallback(
+    (event: React.TouchEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      endMicPress();
+    },
+    [endMicPress],
   );
 
   const handleLeavePage = useCallback(() => {
@@ -501,8 +611,11 @@ export default function QuestionsPage() {
         onPointerDown={handleMicPress}
         onPointerUp={handleMicRelease}
         onPointerCancel={handleMicRelease}
+        onTouchStart={handleMicTouchStart}
+        onTouchEnd={handleMicTouchEnd}
+        onTouchCancel={handleMicTouchEnd}
         disabled={micDisabled}
-        className={`absolute bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] right-5 z-10 flex h-16 w-16 select-none items-center justify-center rounded-full text-2xl shadow-[0_8px_24px_rgba(15,23,42,0.28)] transition active:scale-95 touch-none ${
+        className={`absolute bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] right-5 z-10 flex h-16 w-16 select-none items-center justify-center rounded-full text-2xl shadow-[0_8px_24px_rgba(15,23,42,0.28)] transition active:scale-95 ${
           micListening ? "bg-blue-600" : "bg-slate-900"
         } ${micDisabled ? "cursor-not-allowed opacity-50" : ""}`}
         style={{ WebkitTouchCallout: "none", WebkitUserSelect: "none" }}
