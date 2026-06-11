@@ -27,6 +27,7 @@ export default function QuestionsPage() {
   const [lastAssistantText, setLastAssistantText] = useState("");
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const micPressedRef = useRef(false);
   const [hasSpeechRecognition, setHasSpeechRecognition] = useState(false);
   const [hasSpeechSynthesis, setHasSpeechSynthesis] = useState(false);
   const {
@@ -150,28 +151,13 @@ export default function QuestionsPage() {
     );
   };
 
-  const handleTtsPlay = (rawText: string, ttsId: string) => {
+  const handleTtsSliderChange = (ttsId: string, rawText: string, value01: number) => {
+    setTtsPositionById((prev) => ({ ...prev, [ttsId]: value01 }));
     const cleaned = cleanTextForSpeech(rawText);
     const segments = splitIntoSpeakSegments(cleaned);
     if (segments.length === 0) return;
-    const pos = ttsPositionById[ttsId] ?? 0;
-    const startIdx = position01ToStartIndex(pos, segments.length);
+    const startIdx = position01ToStartIndex(value01, segments.length);
     playSegmentsFrom(rawText, ttsId, startIdx);
-  };
-
-  const handleTtsStop = () => {
-    stopSpeaking();
-  };
-
-  const handleTtsSliderChange = (ttsId: string, rawText: string, value01: number) => {
-    setTtsPositionById((prev) => ({ ...prev, [ttsId]: value01 }));
-    if (playingTtsIdRef.current === ttsId) {
-      const cleaned = cleanTextForSpeech(rawText);
-      const segments = splitIntoSpeakSegments(cleaned);
-      if (segments.length === 0) return;
-      const startIdx = position01ToStartIndex(value01, segments.length);
-      playSegmentsFrom(rawText, ttsId, startIdx);
-    }
   };
 
   const handleSendMessage = async (text: string) => {
@@ -313,39 +299,62 @@ export default function QuestionsPage() {
     };
   }, []);
 
-  const handleStartListening = () => {
-    const currentStatus = status;
+  const startMicListening = useCallback(() => {
+    if (!recognitionRef.current || !hasSpeechRecognition) return;
+    if (status === "thinking") return;
 
-    if (currentStatus === "speaking") {
-      stopSpeaking();
+    try {
+      recognitionRef.current.start();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error ?? "");
+      if (message.includes("already started") || message.includes("started")) {
+        return;
+      }
+      console.error("Failed to start recognition:", error);
+      micPressedRef.current = false;
+      setStatus("ready");
     }
+  }, [hasSpeechRecognition, status]);
 
-    if (currentStatus === "listening" && recognitionRef.current) {
+  const handleMicPress = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      if (!hasSpeechRecognition || status === "thinking") return;
+
+      unlockAudioPlayback();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      micPressedRef.current = true;
+
+      if (status === "speaking" || isHybridSpeaking || playingTtsIdRef.current) {
+        stopSpeaking();
+        window.setTimeout(() => {
+          if (micPressedRef.current) startMicListening();
+        }, 150);
+        return;
+      }
+
+      startMicListening();
+    },
+    [hasSpeechRecognition, isHybridSpeaking, startMicListening, status, stopSpeaking, unlockAudioPlayback],
+  );
+
+  const handleMicRelease = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      if (!micPressedRef.current) return;
+      micPressedRef.current = false;
+
+      if (!recognitionRef.current) return;
       try {
         recognitionRef.current.stop();
       } catch {
         // ignore
       }
-      return;
-    }
-
-    const delay = currentStatus === "speaking" ? 200 : 0;
-
-    setTimeout(() => {
-      if (!recognitionRef.current) return;
-
-      try {
-        recognitionRef.current.start();
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error ?? "");
-        if (message.includes("already started") || message.includes("started")) {
-          return;
-        }
-        console.error("Failed to start recognition:", error);
-        setStatus("ready");
-      }
-    }, delay);
-  };
+    },
+    [],
+  );
 
   const handleLeavePage = useCallback(() => {
     stopSpeaking();
@@ -361,28 +370,13 @@ export default function QuestionsPage() {
   const activeTtsId = messages.length > 0 ? `m-${messages.length - 1}` : "solo";
   const canControlTts = Boolean(lastAssistantText.trim());
   const ttsSettings = loadTtsSettings();
-  const useCloudTts = ttsSettings.provider === "openai" || ttsSettings.provider === "azure";
   const showSegmentScrubber = ttsSettings.provider === "browser" && hasSpeechSynthesis;
 
-  const handleCloudTtsPlay = () => {
-    if (!canControlTts) return;
-    unlockAudioPlayback();
-    setStatus("speaking");
-    void speakHybrid(lastAssistantText, {
-      provider: ttsSettings.provider,
-      openAiVoice: ttsSettings.openAiVoice,
-      azureVoice: ttsSettings.azureVoice,
-      browserVoiceUri: ttsSettings.browserVoiceUri || undefined,
-      voiceMode: "preferFemaleRu",
-      format: "mp3",
-      speed: ttsSettings.speechSpeed,
-    })
-      .catch((err) => console.error("Cloud TTS play failed:", err))
-      .finally(() => setStatus("ready"));
-  };
+  const micDisabled = !hasSpeechRecognition || status === "thinking";
+  const micListening = status === "listening";
 
   return (
-    <main className="flex min-h-[640px] w-full max-w-[390px] flex-col rounded-[32px] bg-white px-5 pb-4 pt-6 shadow-[0_18px_45px_rgba(15,23,42,0.12)] border border-slate-200">
+    <main className="relative flex min-h-[640px] w-full max-w-[390px] flex-col rounded-[32px] bg-white px-5 pb-4 pt-6 shadow-[0_18px_45px_rgba(15,23,42,0.12)] border border-slate-200">
       <header className="flex items-center justify-between mb-4">
         <h1 className="text-lg font-semibold text-slate-900">Экскурсия по вопросам</h1>
         <Link
@@ -394,31 +388,6 @@ export default function QuestionsPage() {
         </Link>
       </header>
 
-      <div className="mb-6 flex justify-center">
-        <button
-          onClick={handleStartListening}
-          disabled={!hasSpeechRecognition || status === "thinking"}
-          className={`flex h-20 w-20 items-center justify-center rounded-full text-3xl shadow-lg transition active:scale-95 hover:bg-slate-800 ${
-            status === "speaking"
-              ? "bg-red-600 hover:bg-red-700"
-              : status === "listening"
-                ? "bg-blue-600 hover:bg-blue-700"
-                : "bg-slate-900"
-          } ${!hasSpeechRecognition || status === "thinking" ? "opacity-50 cursor-not-allowed" : ""}`}
-          title={
-            !hasSpeechRecognition
-              ? "Голосовой ввод недоступен"
-              : status === "speaking"
-                ? "Прервать и начать слушать"
-                : status === "listening"
-                  ? "Остановить прослушивание"
-                  : "Начать говорить"
-          }
-        >
-          🎤
-        </button>
-      </div>
-
       <div className="mb-4 rounded-2xl bg-slate-50 px-4 py-3 border border-slate-200">
         <p className="text-xs font-medium text-slate-500 mb-1">Ваш последний вопрос:</p>
         <p className="text-sm text-slate-900">
@@ -426,63 +395,9 @@ export default function QuestionsPage() {
         </p>
       </div>
 
-      {(showSegmentScrubber || useCloudTts) && (
-        <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-          <p className="text-xs font-medium text-slate-600 mb-2">
-            {showSegmentScrubber ? "Прокрутка рассказа" : "Озвучка ответа"}
-          </p>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() =>
-                useCloudTts ? handleCloudTtsPlay() : handleTtsPlay(lastAssistantText, activeTtsId)
-              }
-              disabled={!canControlTts || status === "thinking"}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-40"
-              title={useCloudTts ? "Слушать ответ" : "Слушать с выбранного места"}
-            >
-              ▶
-            </button>
-            <button
-              type="button"
-              onClick={handleTtsStop}
-              disabled={useCloudTts ? !isHybridSpeaking : playingTtsId !== activeTtsId}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-xs font-semibold text-slate-800 transition hover:bg-slate-100 disabled:opacity-40"
-              title="Стоп"
-            >
-              ⏹
-            </button>
-            {showSegmentScrubber && (
-              <input
-                type="range"
-                min={0}
-                max={100}
-                step={1}
-                value={Math.round((ttsPositionById[activeTtsId] ?? 0) * 100)}
-                onChange={(e) =>
-                  handleTtsSliderChange(
-                    activeTtsId,
-                    lastAssistantText,
-                    Number(e.target.value) / 100
-                  )
-                }
-                disabled={!canControlTts || status === "thinking"}
-                className="min-w-0 flex-1 accent-slate-900"
-                title="Перемотка по частям текста"
-              />
-            )}
-          </div>
-          {useCloudTts && (
-            <p className="mt-2 text-xs text-slate-500">
-              Перемотка по фразам доступна в режиме «Браузер» в настройках.
-            </p>
-          )}
-        </div>
-      )}
-
       {status === "thinking" && <ThinkingIndicator className="mb-4" />}
 
-      <div className="mb-4 rounded-2xl bg-slate-900 px-4 py-3 text-white">
+      <div className="mb-3 rounded-2xl bg-slate-900 px-4 py-3 text-white">
         <div className="flex items-start justify-between mb-1">
           <p className="text-xs font-medium text-slate-300">Ответ Кизера:</p>
         </div>
@@ -496,6 +411,23 @@ export default function QuestionsPage() {
         </div>
       </div>
 
+      {showSegmentScrubber && (
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={Math.round((ttsPositionById[activeTtsId] ?? 0) * 100)}
+          onChange={(e) =>
+            handleTtsSliderChange(activeTtsId, lastAssistantText, Number(e.target.value) / 100)
+          }
+          disabled={!canControlTts || status === "thinking"}
+          className="mb-4 w-full accent-violet-600 disabled:opacity-40"
+          aria-label="Перемотка рассказа экскурсовода"
+          title="Перемотка рассказа экскурсовода"
+        />
+      )}
+
       <div className="mt-auto border-t border-slate-200 pt-3 pb-[env(safe-area-inset-bottom,0px)]">
         <Link
           href={ROUTES.home}
@@ -505,6 +437,25 @@ export default function QuestionsPage() {
           На главную
         </Link>
       </div>
+
+      <button
+        type="button"
+        onPointerDown={handleMicPress}
+        onPointerUp={handleMicRelease}
+        onPointerCancel={handleMicRelease}
+        disabled={micDisabled}
+        className={`absolute bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] right-5 z-10 flex h-16 w-16 select-none items-center justify-center rounded-full text-2xl shadow-[0_8px_24px_rgba(15,23,42,0.28)] transition active:scale-95 touch-none ${
+          micListening ? "bg-blue-600" : "bg-slate-900"
+        } ${micDisabled ? "cursor-not-allowed opacity-50" : ""}`}
+        style={{ WebkitTouchCallout: "none", WebkitUserSelect: "none" }}
+        aria-label={
+          micListening
+            ? "Слушаю… отпустите, когда закончите вопрос"
+            : "Удерживайте и говорите. Прерывает рассказ, если Кизер говорит"
+        }
+      >
+        🎤
+      </button>
     </main>
   );
 }
