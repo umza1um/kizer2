@@ -59,8 +59,8 @@ export default function Home() {
       </section>
 
       <div className="mt-5 border-t border-slate-200 pt-3 pb-[env(safe-area-inset-bottom,0px)]">
-        <nav className="flex items-center justify-between gap-4 text-xs font-medium text-slate-600">
-          <Link href={ROUTES.settings} className="flex-1">
+        <nav className="grid grid-cols-3 gap-2 text-xs font-medium text-slate-600">
+          <Link href={ROUTES.settings}>
             <Button
               type="button"
               fullWidth
@@ -69,17 +69,26 @@ export default function Home() {
               настройки
             </Button>
           </Link>
-          <Link href={ROUTES.admin} className="flex-1">
+          <Link href={ROUTES.logs}>
+            <Button
+              type="button"
+              fullWidth
+              className="bg-violet-100 text-violet-800 shadow-none hover:bg-violet-200 active:bg-violet-200"
+            >
+              логи
+            </Button>
+          </Link>
+          <Link href={ROUTES.admin}>
             <Button
               type="button"
               fullWidth
               className="bg-slate-900 text-slate-50 hover:bg-slate-800"
-          >
+            >
               админка
             </Button>
           </Link>
         </nav>
-        </div>
+      </div>
       </main>
   );
 }

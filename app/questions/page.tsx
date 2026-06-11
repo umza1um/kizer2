@@ -12,6 +12,7 @@ import {
 } from "../../lib/tts/browserSpeech";
 import { loadTtsSettings } from "../../lib/tts/settings";
 import { prefetchTts, useHybridTts } from "../../lib/tts/useHybridTts";
+import { getRuntimeAccountsSnapshot, techLog } from "../../lib/logging";
 
 type Message = {
   role: "user" | "assistant";
@@ -241,6 +242,16 @@ export default function QuestionsPage() {
   const handleSendMessage = async (text: string) => {
     if (!text.trim()) return;
 
+    techLog({
+      level: "info",
+      category: "ui",
+      action: "questions.send",
+      message: text.trim(),
+      urls: ["/api/questions/chat"],
+      accounts: getRuntimeAccountsSnapshot(),
+      metadata: { chars: text.trim().length },
+    });
+
     const userMessage: Message = { role: "user", content: text };
     const newMessages = [...messages, userMessage].slice(-10);
     setMessages(newMessages);
@@ -273,6 +284,15 @@ export default function QuestionsPage() {
       setMessages(updated);
       setLastAssistantText(assistantText);
       setStatus("ready");
+
+      techLog({
+        level: "info",
+        category: "ui",
+        action: "questions.answer",
+        message: assistantText.slice(0, 160) + (assistantText.length > 160 ? "…" : ""),
+        accounts: getRuntimeAccountsSnapshot(),
+        metadata: { chars: assistantText.length },
+      });
 
       const assistantIdx = updated.length - 1;
       const ttsId = `m-${assistantIdx}`;
@@ -336,7 +356,23 @@ export default function QuestionsPage() {
         const trimmed = transcript.trim();
         if (trimmed) {
           setLastUserSpeech(trimmed);
+          techLog({
+            level: "info",
+            category: "speech",
+            action: "recognition.complete",
+            message: trimmed,
+            accounts: getRuntimeAccountsSnapshot(),
+            metadata: { length: trimmed.length },
+          });
           void handleSendMessageRef.current(trimmed, "voice");
+        } else {
+          techLog({
+            level: "warn",
+            category: "speech",
+            action: "recognition.empty",
+            message: "Распознавание завершилось без текста",
+            accounts: getRuntimeAccountsSnapshot(),
+          });
         }
       };
 
@@ -370,6 +406,14 @@ export default function QuestionsPage() {
           return;
         }
         console.error("Speech recognition error:", event.error);
+        techLog({
+          level: "error",
+          category: "speech",
+          action: "recognition.error",
+          message: event.error,
+          accounts: getRuntimeAccountsSnapshot(),
+          metadata: { message: event.message },
+        });
         micSessionRef.current = false;
         recognitionStartedRef.current = false;
         stopRequestedRef.current = false;
@@ -420,6 +464,12 @@ export default function QuestionsPage() {
   const endMicPress = useCallback(() => {
     if (!micPressedRef.current) return;
     micPressedRef.current = false;
+    techLog({
+      level: "debug",
+      category: "speech",
+      action: "mic.release",
+      accounts: getRuntimeAccountsSnapshot(),
+    });
     requestStopRecognition();
   }, [requestStopRecognition]);
 
@@ -464,6 +514,12 @@ export default function QuestionsPage() {
 
     unlockAudioPlayback();
     micPressedRef.current = true;
+    techLog({
+      level: "debug",
+      category: "speech",
+      action: "mic.press",
+      accounts: getRuntimeAccountsSnapshot(),
+    });
 
     const onGlobalRelease = () => endMicPress();
     window.addEventListener("pointerup", onGlobalRelease, { once: true });

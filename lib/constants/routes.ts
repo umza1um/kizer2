@@ -6,6 +6,7 @@ export const ROUTES = {
   geo: "/geo",
   settings: "/settings",
   admin: "/admin",
+  logs: "/logs",
 } as const;
 
 export type RouteKey = keyof typeof ROUTES;

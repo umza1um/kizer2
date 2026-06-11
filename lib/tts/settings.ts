@@ -153,4 +153,9 @@ export function saveTtsSettings(settings: TtsSettings): void {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(TTS_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
   window.dispatchEvent(new CustomEvent("kizer-tts-settings-changed", { detail: settings }));
+  window.dispatchEvent(
+    new CustomEvent("kizer-tts-settings-saved", {
+      detail: settings,
+    }),
+  );
 }
