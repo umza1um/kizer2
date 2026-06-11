@@ -60,11 +60,24 @@ export default function QuestionsPage() {
     setStatus("ready");
   }, [stopHybrid]);
 
+  const getTtsSpeakOptions = useCallback(() => {
+    const tts = loadTtsSettings();
+    return {
+      provider: tts.provider,
+      openAiVoice: tts.openAiVoice,
+      azureVoice: tts.azureVoice,
+      browserVoiceUri: tts.browserVoiceUri || undefined,
+      voiceMode: "preferFemaleRu" as const,
+      format: "mp3" as const,
+      speed: tts.speechSpeed,
+    };
+  }, []);
+
   /**
    * Озвучка с перемоткой: играет сегменты с startIndex.
    * position01 на ползунке = доля пройденных сегментов.
    */
-  const playSegmentsFrom = useCallback(
+  const playBrowserSegmentsFrom = useCallback(
     (rawText: string, ttsId: string, startSegmentIndex: number) => {
       const runtimeOk =
         typeof window !== "undefined" && "speechSynthesis" in window && !!window.speechSynthesis;
@@ -75,8 +88,8 @@ export default function QuestionsPage() {
       if (segments.length === 0) return;
 
       const synth = window.speechSynthesis;
+      playingTtsIdRef.current = null;
       synth.cancel();
-
       playingTtsIdRef.current = ttsId;
       setPlayingTtsId(ttsId);
 
@@ -138,7 +151,68 @@ export default function QuestionsPage() {
 
       speakNext();
     },
-    [applyRussianVoice]
+    [applyRussianVoice],
+  );
+
+  const playCloudSegmentsFrom = useCallback(
+    async (rawText: string, ttsId: string, startSegmentIndex: number) => {
+      const cleaned = cleanTextForSpeech(rawText);
+      const segments = splitIntoSpeakSegments(cleaned);
+      if (segments.length === 0) return;
+
+      const options = getTtsSpeakOptions();
+      playingTtsIdRef.current = null;
+      stopHybrid();
+      playingTtsIdRef.current = ttsId;
+      setPlayingTtsId(ttsId);
+
+      let i = Math.max(0, Math.min(startSegmentIndex, segments.length - 1));
+
+      const updateSlider = (segmentAfterEnd: number) => {
+        const p = segmentAfterEnd / segments.length;
+        setTtsPositionById((prev) => ({ ...prev, [ttsId]: Math.min(1, Math.max(0, p)) }));
+      };
+
+      updateSlider(i);
+      setStatus("speaking");
+
+      try {
+        for (; i < segments.length; i += 1) {
+          if (playingTtsIdRef.current !== ttsId) return;
+          if (i + 1 < segments.length) {
+            prefetchTts(segments[i + 1], options);
+          }
+          setStatus("speaking");
+          await speakHybrid(segments[i], options);
+          updateSlider(i + 1);
+        }
+      } catch (err) {
+        console.error("Cloud TTS segment failed:", err);
+        const msg = err instanceof Error ? err.message : "Озвучка недоступна";
+        alert(msg);
+      } finally {
+        if (playingTtsIdRef.current === ttsId) {
+          playingTtsIdRef.current = null;
+          setPlayingTtsId(null);
+          setStatus("ready");
+          updateSlider(segments.length);
+        }
+      }
+    },
+    [getTtsSpeakOptions, speakHybrid, stopHybrid],
+  );
+
+  const playTtsFromSegment = useCallback(
+    (rawText: string, ttsId: string, startSegmentIndex: number) => {
+      const tts = loadTtsSettings();
+      const useCloud = tts.provider === "openai" || tts.provider === "azure";
+      if (useCloud) {
+        void playCloudSegmentsFrom(rawText, ttsId, startSegmentIndex);
+      } else {
+        playBrowserSegmentsFrom(rawText, ttsId, startSegmentIndex);
+      }
+    },
+    [playBrowserSegmentsFrom, playCloudSegmentsFrom],
   );
 
   /** Ползунок 0–1 → индекс сегмента с которого начать. */
@@ -157,7 +231,7 @@ export default function QuestionsPage() {
     const segments = splitIntoSpeakSegments(cleaned);
     if (segments.length === 0) return;
     const startIdx = position01ToStartIndex(value01, segments.length);
-    playSegmentsFrom(rawText, ttsId, startIdx);
+    playTtsFromSegment(rawText, ttsId, startIdx);
   };
 
   const handleSendMessage = async (text: string) => {
@@ -199,6 +273,8 @@ export default function QuestionsPage() {
       const assistantIdx = updated.length - 1;
       const ttsId = `m-${assistantIdx}`;
 
+      setTtsPositionById((prev) => ({ ...prev, [ttsId]: 0 }));
+
       const tts = loadTtsSettings();
       const useCloudTts = tts.provider === "openai" || tts.provider === "azure";
       const canBrowserTts =
@@ -207,32 +283,11 @@ export default function QuestionsPage() {
         "speechSynthesis" in window &&
         !!window.speechSynthesis;
 
-      setTtsPositionById((prev) => ({ ...prev, [ttsId]: 0 }));
-
-      if (useCloudTts) {
-        prefetchTts(assistantText, {
-          provider: tts.provider,
-          openAiVoice: tts.openAiVoice,
-          azureVoice: tts.azureVoice,
-        });
-        setStatus("speaking");
-        void speakHybrid(assistantText, {
-          provider: tts.provider,
-          openAiVoice: tts.openAiVoice,
-          azureVoice: tts.azureVoice,
-          browserVoiceUri: tts.browserVoiceUri || undefined,
-          voiceMode: "preferFemaleRu",
-          format: "mp3",
-          speed: tts.speechSpeed,
-        })
-          .catch((err) => {
-            console.error("Cloud TTS failed:", err);
-            const msg = err instanceof Error ? err.message : "Озвучка недоступна";
-            alert(msg);
-          })
-          .finally(() => setStatus("ready"));
-      } else if (canBrowserTts) {
-        playSegmentsFrom(assistantText, ttsId, 0);
+      if (useCloudTts || canBrowserTts) {
+        if (useCloudTts) {
+          prefetchTts(assistantText, getTtsSpeakOptions());
+        }
+        playTtsFromSegment(assistantText, ttsId, 0);
       }
     } catch (error) {
       console.error("Chat error:", error);
@@ -370,7 +425,10 @@ export default function QuestionsPage() {
   const activeTtsId = messages.length > 0 ? `m-${messages.length - 1}` : "solo";
   const canControlTts = Boolean(lastAssistantText.trim());
   const ttsSettings = loadTtsSettings();
-  const showSegmentScrubber = ttsSettings.provider === "browser" && hasSpeechSynthesis;
+  const canScrubTts =
+    ttsSettings.provider === "openai" ||
+    ttsSettings.provider === "azure" ||
+    (ttsSettings.provider === "browser" && hasSpeechSynthesis);
 
   const micDisabled = !hasSpeechRecognition || status === "thinking";
   const micListening = status === "listening";
@@ -411,7 +469,7 @@ export default function QuestionsPage() {
         </div>
       </div>
 
-      {showSegmentScrubber && (
+      {canScrubTts && (
         <input
           type="range"
           min={0}
