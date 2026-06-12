@@ -33,6 +33,10 @@ export default function QuestionsPage() {
   const recognitionStartedRef = useRef(false);
   const stopRequestedRef = useRef(false);
   const pendingTranscriptRef = useRef("");
+  const speechFinalRef = useRef("");
+  const liveSpeechRafRef = useRef<number | null>(null);
+  const [liveSpeech, setLiveSpeech] = useState("");
+  const [micHolding, setMicHolding] = useState(false);
   const [hasSpeechRecognition, setHasSpeechRecognition] = useState(false);
   const [hasSpeechSynthesis, setHasSpeechSynthesis] = useState(false);
   const {
@@ -353,6 +357,7 @@ export default function QuestionsPage() {
         stopRequestedRef.current = false;
         pendingTranscriptRef.current = "";
 
+        setLiveSpeech("");
         const trimmed = transcript.trim();
         if (trimmed) {
           setLastUserSpeech(trimmed);
@@ -391,14 +396,30 @@ export default function QuestionsPage() {
       };
 
       recognitionRef.current.onresult = (event: SpeechRecognitionEvent) => {
-        let transcript = "";
-        for (let i = 0; i < event.results.length; i += 1) {
-          transcript += event.results[i][0].transcript;
+        let interim = "";
+        for (let i = event.resultIndex; i < event.results.length; i += 1) {
+          const result = event.results[i];
+          const piece = result[0]?.transcript ?? "";
+          if (!piece) continue;
+          if (result.isFinal) {
+            speechFinalRef.current += piece;
+          } else {
+            interim += piece;
+          }
         }
+
+        const transcript = (speechFinalRef.current + interim).replace(/\s+/g, " ").trim();
         pendingTranscriptRef.current = transcript;
-        if (transcript.trim()) {
-          setLastUserSpeech(transcript.trim());
+
+        if (!transcript) return;
+
+        if (liveSpeechRafRef.current != null) {
+          cancelAnimationFrame(liveSpeechRafRef.current);
         }
+        liveSpeechRafRef.current = requestAnimationFrame(() => {
+          liveSpeechRafRef.current = null;
+          setLiveSpeech(transcript);
+        });
       };
 
       recognitionRef.current.onerror = (event: SpeechRecognitionErrorEvent) => {
@@ -424,13 +445,27 @@ export default function QuestionsPage() {
       };
 
       recognitionRef.current.onend = () => {
+        recognitionStartedRef.current = false;
+
+        // Android Chrome иногда завершает сессию, пока кнопка ещё зажата.
+        if (micPressedRef.current && !stopRequestedRef.current) {
+          try {
+            recognitionRef.current?.start();
+          } catch {
+            // ignore
+          }
+          return;
+        }
+
         const transcript = pendingTranscriptRef.current;
-        if (stopRequestedRef.current || transcript.trim()) {
+        if (stopRequestedRef.current) {
           finishMicSession(transcript);
         } else {
           micSessionRef.current = false;
-          recognitionStartedRef.current = false;
         }
+
+        setLiveSpeech("");
+        setMicHolding(false);
         setStatus((s) => (s === "listening" ? "ready" : s));
       };
     }
@@ -464,6 +499,7 @@ export default function QuestionsPage() {
   const endMicPress = useCallback(() => {
     if (!micPressedRef.current) return;
     micPressedRef.current = false;
+    setMicHolding(false);
     techLog({
       level: "debug",
       category: "speech",
@@ -477,9 +513,11 @@ export default function QuestionsPage() {
     if (!recognitionRef.current || !hasSpeechRecognition) return;
 
     pendingTranscriptRef.current = "";
+    speechFinalRef.current = "";
     recognitionStartedRef.current = false;
     stopRequestedRef.current = false;
     micSessionRef.current = true;
+    setLiveSpeech("");
 
     try {
       recognitionRef.current.start();
@@ -514,6 +552,7 @@ export default function QuestionsPage() {
 
     unlockAudioPlayback();
     micPressedRef.current = true;
+    setMicHolding(true);
     techLog({
       level: "debug",
       category: "speech",
@@ -524,7 +563,6 @@ export default function QuestionsPage() {
     const onGlobalRelease = () => endMicPress();
     window.addEventListener("pointerup", onGlobalRelease, { once: true });
     window.addEventListener("pointercancel", onGlobalRelease, { once: true });
-    window.addEventListener("touchend", onGlobalRelease, { once: true, passive: true });
 
     if (status === "speaking" || isHybridSpeaking || playingTtsIdRef.current) {
       stopSpeaking();
@@ -545,33 +583,22 @@ export default function QuestionsPage() {
     unlockAudioPlayback,
   ]);
 
-  const handleMicPress = useCallback(
+  const handleMicPointerDown = useCallback(
     (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (event.pointerType === "mouse" && event.button !== 0) return;
       event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
       beginMicPress();
     },
     [beginMicPress],
   );
 
-  const handleMicRelease = useCallback(
+  const handleMicPointerUp = useCallback(
     (event: React.PointerEvent<HTMLButtonElement>) => {
       event.preventDefault();
-      endMicPress();
-    },
-    [endMicPress],
-  );
-
-  const handleMicTouchStart = useCallback(
-    (event: React.TouchEvent<HTMLButtonElement>) => {
-      event.preventDefault();
-      beginMicPress();
-    },
-    [beginMicPress],
-  );
-
-  const handleMicTouchEnd = useCallback(
-    (event: React.TouchEvent<HTMLButtonElement>) => {
-      event.preventDefault();
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
       endMicPress();
     },
     [endMicPress],
@@ -597,7 +624,11 @@ export default function QuestionsPage() {
     (ttsSettings.provider === "browser" && hasSpeechSynthesis);
 
   const micDisabled = !hasSpeechRecognition || status === "thinking";
-  const micListening = status === "listening";
+  const micListening = micHolding || status === "listening";
+  const questionPreview =
+    micHolding || status === "listening"
+      ? liveSpeech || "Слушаю…"
+      : lastUserSpeech || "Здесь будет отображаться ваш последний вопрос.";
 
   return (
     <main className="relative flex min-h-[640px] w-full max-w-[390px] flex-col rounded-[32px] bg-white px-5 pb-4 pt-6 shadow-[0_18px_45px_rgba(15,23,42,0.12)] border border-slate-200">
@@ -614,8 +645,8 @@ export default function QuestionsPage() {
 
       <div className="mb-4 rounded-2xl bg-slate-50 px-4 py-3 border border-slate-200">
         <p className="text-xs font-medium text-slate-500 mb-1">Ваш последний вопрос:</p>
-        <p className="text-sm text-slate-900">
-          {lastUserSpeech || "Здесь будет отображаться ваш последний вопрос."}
+        <p className="min-h-[2.5rem] text-sm text-slate-900 break-words">
+          {questionPreview}
         </p>
       </div>
 
@@ -625,7 +656,7 @@ export default function QuestionsPage() {
         <div className="flex items-start justify-between mb-1">
           <p className="text-xs font-medium text-slate-300">Ответ Кизера:</p>
         </div>
-        <div className="h-[32vh] min-h-[200px] max-h-[280px] overflow-y-auto pr-1">
+        <div className="h-[240px] overflow-y-auto pr-1">
           <p className="text-sm whitespace-pre-wrap">
             {lastAssistantText ||
               (status === "thinking"
@@ -664,17 +695,14 @@ export default function QuestionsPage() {
 
       <button
         type="button"
-        onPointerDown={handleMicPress}
-        onPointerUp={handleMicRelease}
-        onPointerCancel={handleMicRelease}
-        onTouchStart={handleMicTouchStart}
-        onTouchEnd={handleMicTouchEnd}
-        onTouchCancel={handleMicTouchEnd}
+        onPointerDown={handleMicPointerDown}
+        onPointerUp={handleMicPointerUp}
+        onPointerCancel={handleMicPointerUp}
         disabled={micDisabled}
-        className={`absolute bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] right-5 z-10 flex h-16 w-16 select-none items-center justify-center rounded-full text-2xl shadow-[0_8px_24px_rgba(15,23,42,0.28)] transition active:scale-95 ${
+        className={`absolute bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] right-5 z-10 flex h-16 w-16 select-none items-center justify-center rounded-full text-2xl shadow-[0_8px_24px_rgba(15,23,42,0.28)] touch-none ${
           micListening ? "bg-blue-600" : "bg-slate-900"
         } ${micDisabled ? "cursor-not-allowed opacity-50" : ""}`}
-        style={{ WebkitTouchCallout: "none", WebkitUserSelect: "none" }}
+        style={{ WebkitTouchCallout: "none", WebkitUserSelect: "none", touchAction: "none" }}
         aria-label={
           micListening
             ? "Слушаю… отпустите, когда закончите вопрос"
