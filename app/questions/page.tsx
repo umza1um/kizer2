@@ -13,6 +13,7 @@ import {
 import { loadTtsSettings } from "../../lib/tts/settings";
 import { prefetchTts, useHybridTts } from "../../lib/tts/useHybridTts";
 import { techLog } from "../../lib/logging";
+import { buildTranscriptFromResults, getMicRestartLimit } from "../../lib/speech/transcript";
 
 type Message = {
   role: "user" | "assistant";
@@ -33,10 +34,11 @@ export default function QuestionsPage() {
   const recognitionStartedRef = useRef(false);
   const stopRequestedRef = useRef(false);
   const pendingTranscriptRef = useRef("");
-  const speechFinalRef = useRef("");
+  const pendingStopTimerRef = useRef<number | null>(null);
   const micRestartCountRef = useRef(0);
-  const sendingRef = useRef(false);
+  const micRestartLimitRef = useRef(getMicRestartLimit());
   const liveSpeechRafRef = useRef<number | null>(null);
+  const sendingRef = useRef(false);
   const [liveSpeech, setLiveSpeech] = useState("");
   const [micHolding, setMicHolding] = useState(false);
   const [hasSpeechRecognition, setHasSpeechRecognition] = useState(false);
@@ -90,6 +92,7 @@ export default function QuestionsPage() {
    */
   const playBrowserSegmentsFrom = useCallback(
     (rawText: string, ttsId: string, startSegmentIndex: number) => {
+      unlockAudioPlayback();
       const runtimeOk =
         typeof window !== "undefined" && "speechSynthesis" in window && !!window.speechSynthesis;
       if (!runtimeOk) return;
@@ -162,11 +165,12 @@ export default function QuestionsPage() {
 
       speakNext();
     },
-    [applyRussianVoice],
+    [applyRussianVoice, unlockAudioPlayback],
   );
 
   const playCloudFull = useCallback(
     async (rawText: string, ttsId: string) => {
+      unlockAudioPlayback();
       const options = getTtsSpeakOptions();
       playingTtsIdRef.current = null;
       stopHybrid();
@@ -192,7 +196,7 @@ export default function QuestionsPage() {
         }
       }
     },
-    [getTtsSpeakOptions, speakHybrid, stopHybrid],
+    [getTtsSpeakOptions, speakHybrid, stopHybrid, unlockAudioPlayback],
   );
 
   const playCloudSegmentsFrom = useCallback(
@@ -345,6 +349,7 @@ export default function QuestionsPage() {
         !!window.speechSynthesis;
 
       if (useCloudTts || canBrowserTts) {
+        unlockAudioPlayback();
         if (useCloudTts) {
           prefetchTts(assistantText, getTtsSpeakOptions());
         }
@@ -367,6 +372,8 @@ export default function QuestionsPage() {
 
   handleSendMessageRef.current = handleSendMessage;
 
+  const finishMicSessionRef = useRef<(transcript: string) => void>(() => {});
+
   useEffect(() => {
     const speechRecognitionAvailable =
       typeof window !== "undefined" &&
@@ -386,8 +393,16 @@ export default function QuestionsPage() {
       recognitionRef.current.interimResults = true;
       recognitionRef.current.lang = "ru-RU";
 
+      const clearPendingStopTimer = () => {
+        if (pendingStopTimerRef.current != null) {
+          window.clearTimeout(pendingStopTimerRef.current);
+          pendingStopTimerRef.current = null;
+        }
+      };
+
       const finishMicSession = (transcript: string) => {
         if (!micSessionRef.current) return;
+        clearPendingStopTimer();
         micSessionRef.current = false;
         recognitionStartedRef.current = false;
         stopRequestedRef.current = false;
@@ -416,7 +431,10 @@ export default function QuestionsPage() {
         }
       };
 
+      finishMicSessionRef.current = finishMicSession;
+
       recognitionRef.current.onstart = () => {
+        clearPendingStopTimer();
         recognitionStartedRef.current = true;
         setStatus("listening");
         if (stopRequestedRef.current) {
@@ -431,19 +449,7 @@ export default function QuestionsPage() {
       };
 
       recognitionRef.current.onresult = (event: SpeechRecognitionEvent) => {
-        let interim = "";
-        for (let i = event.resultIndex; i < event.results.length; i += 1) {
-          const result = event.results[i];
-          const piece = result[0]?.transcript ?? "";
-          if (!piece) continue;
-          if (result.isFinal) {
-            speechFinalRef.current += piece;
-          } else {
-            interim += piece;
-          }
-        }
-
-        const transcript = (speechFinalRef.current + interim).replace(/\s+/g, " ").trim();
+        const transcript = buildTranscriptFromResults(event.results);
         pendingTranscriptRef.current = transcript;
 
         if (!transcript) return;
@@ -461,6 +467,7 @@ export default function QuestionsPage() {
         if (event.error === "aborted" || event.error === "no-speech") {
           return;
         }
+        clearPendingStopTimer();
         console.error("Speech recognition error:", event.error);
         techLog({
           level: "error",
@@ -472,6 +479,7 @@ export default function QuestionsPage() {
         micSessionRef.current = false;
         recognitionStartedRef.current = false;
         stopRequestedRef.current = false;
+        setMicHolding(false);
         setStatus("ready");
         if (event.error === "not-allowed") {
           alert("Разрешите доступ к микрофону в настройках браузера");
@@ -480,9 +488,10 @@ export default function QuestionsPage() {
 
       recognitionRef.current.onend = () => {
         recognitionStartedRef.current = false;
+        clearPendingStopTimer();
 
-        // Android Chrome иногда завершает сессию, пока кнопка ещё зажата.
-        if (micPressedRef.current && !stopRequestedRef.current && micRestartCountRef.current < 6) {
+        const restartLimit = micRestartLimitRef.current;
+        if (micPressedRef.current && !stopRequestedRef.current && micRestartCountRef.current < restartLimit) {
           micRestartCountRef.current += 1;
           try {
             recognitionRef.current?.start();
@@ -510,6 +519,9 @@ export default function QuestionsPage() {
     }
 
     return () => {
+      if (pendingStopTimerRef.current != null) {
+        window.clearTimeout(pendingStopTimerRef.current);
+      }
       if (recognitionRef.current) {
         recognitionRef.current.stop();
       }
@@ -532,7 +544,19 @@ export default function QuestionsPage() {
       return;
     }
 
-    // iOS: onstart ещё не пришёл — stop() вызовется в onstart.
+    // iOS/Android: onstart ещё не пришёл — stop() вызовется в onstart.
+    // Если recognition так и не стартовал, завершим сессию по таймауту.
+    if (pendingStopTimerRef.current != null) {
+      window.clearTimeout(pendingStopTimerRef.current);
+    }
+    pendingStopTimerRef.current = window.setTimeout(() => {
+      pendingStopTimerRef.current = null;
+      if (!stopRequestedRef.current || !micSessionRef.current) return;
+      if (recognitionStartedRef.current) return;
+      micPressedRef.current = false;
+      setMicHolding(false);
+      finishMicSessionRef.current(pendingTranscriptRef.current);
+    }, 2500);
   }, []);
 
   const endMicPress = useCallback(() => {
@@ -546,7 +570,6 @@ export default function QuestionsPage() {
     if (!recognitionRef.current || !hasSpeechRecognition) return;
 
     pendingTranscriptRef.current = "";
-    speechFinalRef.current = "";
     recognitionStartedRef.current = false;
     stopRequestedRef.current = false;
     micSessionRef.current = true;
@@ -679,6 +702,12 @@ export default function QuestionsPage() {
         </Link>
       </header>
 
+      {!hasSpeechRecognition && (
+        <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          Голосовой ввод недоступен в этом браузере. Используйте Chrome или Safari на телефоне.
+        </p>
+      )}
+
       <div className="mb-4 rounded-2xl bg-slate-50 px-4 py-3 border border-slate-200">
         <p className="text-xs font-medium text-slate-500 mb-1">Ваш последний вопрос:</p>
         <p className="min-h-[2.5rem] text-sm text-slate-900 break-words">
@@ -713,6 +742,35 @@ export default function QuestionsPage() {
           title="Перемотка рассказа экскурсовода"
         />
       )}
+
+      <form
+        className="mb-3 flex gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const input = e.currentTarget.elements.namedItem("question") as HTMLInputElement | null;
+          const text = input?.value.trim() ?? "";
+          if (!text || status === "thinking") return;
+          if (input) input.value = "";
+          void handleSendMessage(text);
+        }}
+      >
+        <input
+          name="question"
+          type="text"
+          enterKeyHint="send"
+          autoComplete="off"
+          placeholder="Или введите вопрос…"
+          disabled={status === "thinking"}
+          className="min-w-0 flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm disabled:opacity-50"
+        />
+        <button
+          type="submit"
+          disabled={status === "thinking"}
+          className="shrink-0 rounded-xl bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+        >
+          →
+        </button>
+      </form>
 
       <div className="mt-auto border-t border-slate-200 pt-3 pb-[env(safe-area-inset-bottom,0px)]">
         <Link
