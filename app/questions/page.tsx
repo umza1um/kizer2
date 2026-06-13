@@ -12,7 +12,7 @@ import {
 } from "../../lib/tts/browserSpeech";
 import { loadTtsSettings } from "../../lib/tts/settings";
 import { prefetchTts, useHybridTts } from "../../lib/tts/useHybridTts";
-import { getRuntimeAccountsSnapshot, techLog } from "../../lib/logging";
+import { techLog } from "../../lib/logging";
 
 type Message = {
   role: "user" | "assistant";
@@ -34,6 +34,7 @@ export default function QuestionsPage() {
   const stopRequestedRef = useRef(false);
   const pendingTranscriptRef = useRef("");
   const speechFinalRef = useRef("");
+  const micRestartCountRef = useRef(0);
   const liveSpeechRafRef = useRef<number | null>(null);
   const [liveSpeech, setLiveSpeech] = useState("");
   const [micHolding, setMicHolding] = useState(false);
@@ -163,6 +164,36 @@ export default function QuestionsPage() {
     [applyRussianVoice],
   );
 
+  const playCloudFull = useCallback(
+    async (rawText: string, ttsId: string) => {
+      const options = getTtsSpeakOptions();
+      playingTtsIdRef.current = null;
+      stopHybrid();
+      playingTtsIdRef.current = ttsId;
+      setPlayingTtsId(ttsId);
+      setTtsPositionById((prev) => ({ ...prev, [ttsId]: 0 }));
+      setStatus("speaking");
+
+      try {
+        await speakHybrid(rawText, options);
+        if (playingTtsIdRef.current === ttsId) {
+          setTtsPositionById((prev) => ({ ...prev, [ttsId]: 1 }));
+        }
+      } catch (err) {
+        console.error("Cloud TTS failed:", err);
+        const msg = err instanceof Error ? err.message : "Озвучка недоступна";
+        alert(msg);
+      } finally {
+        if (playingTtsIdRef.current === ttsId) {
+          playingTtsIdRef.current = null;
+          setPlayingTtsId(null);
+          setStatus("ready");
+        }
+      }
+    },
+    [getTtsSpeakOptions, speakHybrid, stopHybrid],
+  );
+
   const playCloudSegmentsFrom = useCallback(
     async (rawText: string, ttsId: string, startSegmentIndex: number) => {
       const cleaned = cleanTextForSpeech(rawText);
@@ -215,13 +246,15 @@ export default function QuestionsPage() {
     (rawText: string, ttsId: string, startSegmentIndex: number) => {
       const tts = loadTtsSettings();
       const useCloud = tts.provider === "openai" || tts.provider === "azure";
-      if (useCloud) {
+      if (useCloud && startSegmentIndex === 0) {
+        void playCloudFull(rawText, ttsId);
+      } else if (useCloud) {
         void playCloudSegmentsFrom(rawText, ttsId, startSegmentIndex);
       } else {
         playBrowserSegmentsFrom(rawText, ttsId, startSegmentIndex);
       }
     },
-    [playBrowserSegmentsFrom, playCloudSegmentsFrom],
+    [playBrowserSegmentsFrom, playCloudFull, playCloudSegmentsFrom],
   );
 
   /** Ползунок 0–1 → индекс сегмента с которого начать. */
@@ -252,7 +285,6 @@ export default function QuestionsPage() {
       action: "questions.send",
       message: text.trim(),
       urls: ["/api/questions/chat"],
-      accounts: getRuntimeAccountsSnapshot(),
       metadata: { chars: text.trim().length },
     });
 
@@ -294,7 +326,6 @@ export default function QuestionsPage() {
         category: "ui",
         action: "questions.answer",
         message: assistantText.slice(0, 160) + (assistantText.length > 160 ? "…" : ""),
-        accounts: getRuntimeAccountsSnapshot(),
         metadata: { chars: assistantText.length },
       });
 
@@ -366,7 +397,6 @@ export default function QuestionsPage() {
             category: "speech",
             action: "recognition.complete",
             message: trimmed,
-            accounts: getRuntimeAccountsSnapshot(),
             metadata: { length: trimmed.length },
           });
           void handleSendMessageRef.current(trimmed, "voice");
@@ -376,7 +406,6 @@ export default function QuestionsPage() {
             category: "speech",
             action: "recognition.empty",
             message: "Распознавание завершилось без текста",
-            accounts: getRuntimeAccountsSnapshot(),
           });
         }
       };
@@ -432,7 +461,6 @@ export default function QuestionsPage() {
           category: "speech",
           action: "recognition.error",
           message: event.error,
-          accounts: getRuntimeAccountsSnapshot(),
           metadata: { message: event.message },
         });
         micSessionRef.current = false;
@@ -448,7 +476,8 @@ export default function QuestionsPage() {
         recognitionStartedRef.current = false;
 
         // Android Chrome иногда завершает сессию, пока кнопка ещё зажата.
-        if (micPressedRef.current && !stopRequestedRef.current) {
+        if (micPressedRef.current && !stopRequestedRef.current && micRestartCountRef.current < 6) {
+          micRestartCountRef.current += 1;
           try {
             recognitionRef.current?.start();
           } catch {
@@ -500,12 +529,6 @@ export default function QuestionsPage() {
     if (!micPressedRef.current) return;
     micPressedRef.current = false;
     setMicHolding(false);
-    techLog({
-      level: "debug",
-      category: "speech",
-      action: "mic.release",
-      accounts: getRuntimeAccountsSnapshot(),
-    });
     requestStopRecognition();
   }, [requestStopRecognition]);
 
@@ -517,6 +540,7 @@ export default function QuestionsPage() {
     recognitionStartedRef.current = false;
     stopRequestedRef.current = false;
     micSessionRef.current = true;
+    micRestartCountRef.current = 0;
     setLiveSpeech("");
 
     try {
@@ -553,12 +577,6 @@ export default function QuestionsPage() {
     unlockAudioPlayback();
     micPressedRef.current = true;
     setMicHolding(true);
-    techLog({
-      level: "debug",
-      category: "speech",
-      action: "mic.press",
-      accounts: getRuntimeAccountsSnapshot(),
-    });
 
     const onGlobalRelease = () => endMicPress();
     window.addEventListener("pointerup", onGlobalRelease, { once: true });

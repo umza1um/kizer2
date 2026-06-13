@@ -3,7 +3,6 @@
 import { useEffect, useRef } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { installTechLogging, techLog } from "../../lib/logging";
-import { getRuntimeAccountsSnapshot } from "../../lib/logging/context";
 
 export function LogBootstrap() {
   const pathname = usePathname();
@@ -30,7 +29,6 @@ export function LogBootstrap() {
       message: path,
       urls: [path],
       path,
-      accounts: getRuntimeAccountsSnapshot(),
       metadata: {
         referrer: typeof document !== "undefined" ? document.referrer || null : null,
       },

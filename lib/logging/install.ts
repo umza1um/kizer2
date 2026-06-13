@@ -1,34 +1,21 @@
-import { extractUrls, getRuntimeAccountsSnapshot, summarizeBody } from "./context";
+import { extractUrls, summarizeBody } from "./context";
 import { techLog, techLogSystemBoot } from "./logger";
 import type { TtsSettings } from "../tts/settings";
 
 let fetchPatched = false;
 
-function safeJsonParse(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
 }
 
-async function readResponsePreview(response: Response): Promise<unknown> {
-  const contentType = response.headers.get("content-type") ?? "";
-  if (contentType.includes("audio/") || contentType.includes("octet-stream")) {
-    return { contentType, note: "binary body skipped" };
-  }
+function shouldSkipFetchLog(url: string): boolean {
+  return url.includes("/_next/") || url.includes("/favicon");
+}
 
-  try {
-    const clone = response.clone();
-    const text = await clone.text();
-    if (!text) return null;
-    if (text.length > 4000) {
-      return { length: text.length, preview: text.slice(0, 400) + "…" };
-    }
-    return safeJsonParse(text);
-  } catch {
-    return { note: "response body unreadable" };
-  }
+function isTtsSpeakUrl(url: string): boolean {
+  return url.includes("/api/tts/speak");
 }
 
 export function installFetchLogger(): void {
@@ -40,69 +27,53 @@ export function installFetchLogger(): void {
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const started = performance.now();
     const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
-    const url =
-      typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.toString()
-          : input.url;
-
-    let requestBodySummary: Record<string, unknown> | undefined;
-    if (init?.body) {
-      requestBodySummary = summarizeBody(init.body);
-    }
-
-    techLog({
-      level: "info",
-      category: "api",
-      action: "fetch.start",
-      message: `${method} ${url}`,
-      urls: [url, ...extractUrls(requestBodySummary)],
-      accounts: getRuntimeAccountsSnapshot(),
-      metadata: {
-        method,
-        requestBody: requestBodySummary,
-      },
-    });
+    const url = requestUrl(input);
+    const skip = shouldSkipFetchLog(url);
+    const isTts = isTtsSpeakUrl(url);
 
     try {
       const response = await nativeFetch(input, init);
       const durationMs = Math.round(performance.now() - started);
-      const responsePreview = await readResponsePreview(response);
 
-      techLog({
-        level: response.ok ? "info" : "warn",
-        category: "api",
-        action: "fetch.complete",
-        message: `${method} ${url} → ${response.status}`,
-        urls: [url, ...extractUrls(responsePreview)],
-        durationMs,
-        accounts: getRuntimeAccountsSnapshot(),
-        metadata: {
-          method,
-          status: response.status,
-          statusText: response.statusText,
-          ok: response.ok,
-          response: responsePreview,
-        },
-      });
+      if (!skip && (!response.ok || !isTts)) {
+        techLog({
+          level: response.ok ? "debug" : "warn",
+          category: "api",
+          action: "fetch.complete",
+          message: `${method} ${url} → ${response.status}`,
+          urls: [url],
+          durationMs,
+          metadata: {
+            method,
+            status: response.status,
+            ok: response.ok,
+          },
+        });
+      }
 
       return response;
     } catch (error) {
       const durationMs = Math.round(performance.now() - started);
-      techLog({
-        level: "error",
-        category: "api",
-        action: "fetch.error",
-        message: `${method} ${url} failed`,
-        urls: [url],
-        durationMs,
-        accounts: getRuntimeAccountsSnapshot(),
-        metadata: {
-          method,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      });
+      if (!skip) {
+        let requestBodySummary: Record<string, unknown> | undefined;
+        if (init?.body) {
+          requestBodySummary = summarizeBody(init.body);
+        }
+
+        techLog({
+          level: "error",
+          category: "api",
+          action: "fetch.error",
+          message: `${method} ${url} failed`,
+          urls: [url, ...extractUrls(requestBodySummary)],
+          durationMs,
+          metadata: {
+            method,
+            error: error instanceof Error ? error.message : String(error),
+            requestBody: requestBodySummary,
+          },
+        });
+      }
       throw error;
     }
   };
@@ -117,7 +88,6 @@ export function installGlobalErrorLogger(): void {
       level: "info",
       category: "settings",
       action: "tts.save",
-      accounts: getRuntimeAccountsSnapshot(),
       metadata: detail,
     });
   });
@@ -146,7 +116,6 @@ export function installGlobalErrorLogger(): void {
       message: reason instanceof Error ? reason.message : String(reason),
       metadata: {
         stack: reason instanceof Error ? reason.stack : undefined,
-        reason,
       },
     });
   });

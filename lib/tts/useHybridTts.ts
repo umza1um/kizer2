@@ -18,7 +18,6 @@ import {
 } from "./browserSpeech";
 import { chunkTextForTts, shouldUseChunkedTts } from "./chunkText";
 import { fetchCloudTtsBlob, prefetchCloudTts } from "./cloudTtsClient";
-import { getRuntimeAccountsSnapshot, techLog } from "../logging";
 import { shouldUseCloudTtsOnly } from "./platform";
 import {
   AZURE_TTS_VOICES,
@@ -89,12 +88,6 @@ export function useHybridTts(defaultProvider: TtsProvider = "azure") {
   }, []);
 
   const stop = useCallback(() => {
-    techLog({
-      level: "info",
-      category: "tts",
-      action: "speak.stop",
-      accounts: getRuntimeAccountsSnapshot(),
-    });
     cancelOngoing();
   }, [cancelOngoing]);
 
@@ -230,16 +223,6 @@ export function useHybridTts(defaultProvider: TtsProvider = "azure") {
       if (canUseBrowserSpeech()) {
         window.speechSynthesis.cancel();
       }
-
-      techLog({
-        level: "info",
-        category: "tts",
-        action: "speak.start",
-        message: cleanTextForSpeech(text).slice(0, 120),
-        urls: provider === "browser" ? undefined : ["/api/tts/speak"],
-        accounts: getRuntimeAccountsSnapshot(),
-        metadata: { provider, speed, chars: text.length },
-      });
 
       try {
         if (provider === "openai" || provider === "azure") {

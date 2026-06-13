@@ -10,7 +10,7 @@ const LEVEL_WEIGHT: Record<TechLogLevel, number> = {
   error: 3,
 };
 
-let minLevel: TechLogLevel = "debug";
+let minLevel: TechLogLevel = "info";
 let installed = false;
 
 function formatLocalTime(date: Date): string {
