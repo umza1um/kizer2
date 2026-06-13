@@ -35,6 +35,7 @@ export default function QuestionsPage() {
   const pendingTranscriptRef = useRef("");
   const speechFinalRef = useRef("");
   const micRestartCountRef = useRef(0);
+  const sendingRef = useRef(false);
   const liveSpeechRafRef = useRef<number | null>(null);
   const [liveSpeech, setLiveSpeech] = useState("");
   const [micHolding, setMicHolding] = useState(false);
@@ -277,8 +278,9 @@ export default function QuestionsPage() {
   };
 
   const handleSendMessage = async (text: string) => {
-    if (!text.trim()) return;
+    if (!text.trim() || sendingRef.current) return;
 
+    sendingRef.current = true;
     techLog({
       level: "info",
       category: "ui",
@@ -350,13 +352,16 @@ export default function QuestionsPage() {
       }
     } catch (error) {
       console.error("Chat error:", error);
-      setStatus("ready");
       const errorText = error instanceof Error ? error.message : "Произошла ошибка. Попробуйте ещё раз.";
+      setLastAssistantText(errorText);
+      setStatus("ready");
       const errorMessage: Message = {
         role: "assistant",
         content: errorText,
       };
       setMessages([...newMessages, errorMessage].slice(-12));
+    } finally {
+      sendingRef.current = false;
     }
   };
 
@@ -407,6 +412,7 @@ export default function QuestionsPage() {
             action: "recognition.empty",
             message: "Распознавание завершилось без текста",
           });
+          setStatus("ready");
         }
       };
 
@@ -487,14 +493,18 @@ export default function QuestionsPage() {
         }
 
         const transcript = pendingTranscriptRef.current;
-        if (stopRequestedRef.current) {
-          finishMicSession(transcript);
-        } else {
-          micSessionRef.current = false;
-        }
+        const shouldFinish =
+          stopRequestedRef.current || (!micPressedRef.current && micSessionRef.current);
 
         setLiveSpeech("");
         setMicHolding(false);
+
+        if (shouldFinish) {
+          finishMicSession(transcript);
+          return;
+        }
+
+        micSessionRef.current = false;
         setStatus((s) => (s === "listening" ? "ready" : s));
       };
     }
@@ -634,7 +644,11 @@ export default function QuestionsPage() {
   }, [stopSpeaking]);
 
   const activeTtsId = messages.length > 0 ? `m-${messages.length - 1}` : "solo";
-  const canControlTts = Boolean(lastAssistantText.trim());
+  const latestAssistantFromMessages = [...messages]
+    .reverse()
+    .find((m) => m.role === "assistant")?.content;
+  const answerForTts = lastAssistantText || latestAssistantFromMessages || "";
+  const canControlTts = Boolean(answerForTts.trim());
   const ttsSettings = loadTtsSettings();
   const canScrubTts =
     ttsSettings.provider === "openai" ||
@@ -643,6 +657,10 @@ export default function QuestionsPage() {
 
   const micDisabled = !hasSpeechRecognition || status === "thinking";
   const micListening = micHolding || status === "listening";
+  const answerText =
+    lastAssistantText ||
+    latestAssistantFromMessages ||
+    (status === "thinking" ? "" : "Здесь будет отображаться последний ответ экскурсовода.");
   const questionPreview =
     micHolding || status === "listening"
       ? liveSpeech || "Слушаю…"
@@ -675,12 +693,7 @@ export default function QuestionsPage() {
           <p className="text-xs font-medium text-slate-300">Ответ Кизера:</p>
         </div>
         <div className="h-[240px] overflow-y-auto pr-1">
-          <p className="text-sm whitespace-pre-wrap">
-            {lastAssistantText ||
-              (status === "thinking"
-                ? ""
-                : "Здесь будет отображаться последний ответ экскурсовода.")}
-          </p>
+          <p className="text-sm whitespace-pre-wrap">{answerText}</p>
         </div>
       </div>
 
@@ -692,7 +705,7 @@ export default function QuestionsPage() {
           step={1}
           value={Math.round((ttsPositionById[activeTtsId] ?? 0) * 100)}
           onChange={(e) =>
-            handleTtsSliderChange(activeTtsId, lastAssistantText, Number(e.target.value) / 100)
+            handleTtsSliderChange(activeTtsId, answerForTts, Number(e.target.value) / 100)
           }
           disabled={!canControlTts || status === "thinking"}
           className="mb-4 w-full accent-violet-600 disabled:opacity-40"
