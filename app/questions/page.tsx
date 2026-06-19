@@ -13,7 +13,13 @@ import {
 import { loadTtsSettings } from "../../lib/tts/settings";
 import { prefetchTts, useHybridTts } from "../../lib/tts/useHybridTts";
 import { techLog } from "../../lib/logging";
-import { buildTranscriptFromResults, getMicRestartLimit } from "../../lib/speech/transcript";
+import {
+  buildTranscriptFromEvent,
+  getMicRestartLimit,
+  mergeTranscriptOnRestart,
+  resolveTranscriptStrategy,
+} from "../../lib/speech/transcript";
+import { QuestionInputBar } from "../../components/questions/QuestionInputBar";
 
 type Message = {
   role: "user" | "assistant";
@@ -37,6 +43,8 @@ export default function QuestionsPage() {
   const pendingStopTimerRef = useRef<number | null>(null);
   const micRestartCountRef = useRef(0);
   const micRestartLimitRef = useRef(getMicRestartLimit());
+  const desktopAccumulatedRef = useRef("");
+  const sessionBaseRef = useRef("");
   const liveSpeechRafRef = useRef<number | null>(null);
   const sendingRef = useRef(false);
   const [liveSpeech, setLiveSpeech] = useState("");
@@ -449,7 +457,25 @@ export default function QuestionsPage() {
       };
 
       recognitionRef.current.onresult = (event: SpeechRecognitionEvent) => {
-        const transcript = buildTranscriptFromResults(event.results);
+        const strategy = resolveTranscriptStrategy();
+        const current = buildTranscriptFromEvent(event.results, event.resultIndex, {
+          strategy,
+          accumulated: strategy === "desktop" ? desktopAccumulatedRef.current : undefined,
+        });
+
+        const transcript =
+          strategy === "mobile"
+            ? mergeTranscriptOnRestart(sessionBaseRef.current, current)
+            : current;
+
+        if (strategy === "desktop") {
+          for (let i = event.resultIndex; i < event.results.length; i += 1) {
+            if (event.results[i].isFinal) {
+              desktopAccumulatedRef.current += event.results[i][0]?.transcript ?? "";
+            }
+          }
+        }
+
         pendingTranscriptRef.current = transcript;
 
         if (!transcript) return;
@@ -492,6 +518,8 @@ export default function QuestionsPage() {
 
         const restartLimit = micRestartLimitRef.current;
         if (micPressedRef.current && !stopRequestedRef.current && micRestartCountRef.current < restartLimit) {
+          sessionBaseRef.current = pendingTranscriptRef.current;
+          desktopAccumulatedRef.current = "";
           micRestartCountRef.current += 1;
           try {
             recognitionRef.current?.start();
@@ -570,6 +598,8 @@ export default function QuestionsPage() {
     if (!recognitionRef.current || !hasSpeechRecognition) return;
 
     pendingTranscriptRef.current = "";
+    desktopAccumulatedRef.current = "";
+    sessionBaseRef.current = "";
     recognitionStartedRef.current = false;
     stopRequestedRef.current = false;
     micSessionRef.current = true;
@@ -690,7 +720,7 @@ export default function QuestionsPage() {
       : lastUserSpeech || "Здесь будет отображаться ваш последний вопрос.";
 
   return (
-    <main className="relative flex min-h-[640px] w-full max-w-[390px] flex-col rounded-[32px] bg-white px-5 pb-4 pt-6 shadow-[0_18px_45px_rgba(15,23,42,0.12)] border border-slate-200">
+    <main className="flex min-h-[640px] w-full max-w-[390px] flex-col rounded-[32px] bg-white px-5 pb-4 pt-6 shadow-[0_18px_45px_rgba(15,23,42,0.12)] border border-slate-200">
       <header className="flex items-center justify-between mb-4">
         <h1 className="text-lg font-semibold text-slate-900">Экскурсия по вопросам</h1>
         <Link
@@ -743,34 +773,14 @@ export default function QuestionsPage() {
         />
       )}
 
-      <form
-        className="mb-3 flex gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          const input = e.currentTarget.elements.namedItem("question") as HTMLInputElement | null;
-          const text = input?.value.trim() ?? "";
-          if (!text || status === "thinking") return;
-          if (input) input.value = "";
-          void handleSendMessage(text);
-        }}
-      >
-        <input
-          name="question"
-          type="text"
-          enterKeyHint="send"
-          autoComplete="off"
-          placeholder="Или введите вопрос…"
-          disabled={status === "thinking"}
-          className="min-w-0 flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm disabled:opacity-50"
-        />
-        <button
-          type="submit"
-          disabled={status === "thinking"}
-          className="shrink-0 rounded-xl bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
-        >
-          →
-        </button>
-      </form>
+      <QuestionInputBar
+        sendDisabled={status === "thinking"}
+        micDisabled={micDisabled}
+        micListening={micListening}
+        onSend={(text) => void handleSendMessage(text)}
+        onMicPointerDown={handleMicPointerDown}
+        onMicPointerUp={handleMicPointerUp}
+      />
 
       <div className="mt-auto border-t border-slate-200 pt-3 pb-[env(safe-area-inset-bottom,0px)]">
         <Link
@@ -781,25 +791,6 @@ export default function QuestionsPage() {
           На главную
         </Link>
       </div>
-
-      <button
-        type="button"
-        onPointerDown={handleMicPointerDown}
-        onPointerUp={handleMicPointerUp}
-        onPointerCancel={handleMicPointerUp}
-        disabled={micDisabled}
-        className={`absolute bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] right-5 z-10 flex h-16 w-16 select-none items-center justify-center rounded-full text-2xl shadow-[0_8px_24px_rgba(15,23,42,0.28)] touch-none ${
-          micListening ? "bg-blue-600" : "bg-slate-900"
-        } ${micDisabled ? "cursor-not-allowed opacity-50" : ""}`}
-        style={{ WebkitTouchCallout: "none", WebkitUserSelect: "none", touchAction: "none" }}
-        aria-label={
-          micListening
-            ? "Слушаю… отпустите, когда закончите вопрос"
-            : "Удерживайте и говорите. Прерывает рассказ, если Кизер говорит"
-        }
-      >
-        🎤
-      </button>
     </main>
   );
 }
