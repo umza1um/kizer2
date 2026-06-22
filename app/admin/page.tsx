@@ -153,9 +153,11 @@ export default function AdminPage() {
           </span>
         </p>
         <p className="text-xs text-slate-500 mb-2">
-          {searchProvider === "duckduckgo"
-            ? "Веб-поиск: встроенный DuckDuckGo (без ключа). Для Google Lens нужен SERPAPI_API_KEY."
-            : "SERPAPI_API_KEY или BING_SEARCH_API_KEY в .env.local / Vercel"}
+          {searchProvider === "google"
+            ? "Веб-поиск: Google Custom Search API (GOOGLE_CSE_API_KEY + GOOGLE_CSE_CX)."
+            : searchKeyStatus === "configured"
+              ? "Веб-поиск: Google через SerpAPI."
+              : "Задайте SERPAPI_API_KEY (рекомендуется) или GOOGLE_CSE_API_KEY + GOOGLE_CSE_CX в .env.local / Vercel."}
         </p>
         <p className="text-sm text-slate-600 mb-2">
           Google Lens:{" "}

@@ -19,6 +19,8 @@ export function getRuntimeAccountsSnapshot(): TechLogAccounts {
     envOpenAiKey: envFlag("OPENAI_API_KEY"),
     envAzureKey: envFlag("AZURE_SPEECH_KEY"),
     envSerpApiKey: envFlag("SERPAPI_API_KEY"),
+    envGoogleCseKey: envFlag("GOOGLE_CSE_API_KEY"),
+    envGoogleCseCx: envFlag("GOOGLE_CSE_CX"),
     envPublicBaseUrl: envFlag("PUBLIC_BASE_URL"),
     envTtsProvider: envFlag("NEXT_PUBLIC_TTS_PROVIDER"),
   };

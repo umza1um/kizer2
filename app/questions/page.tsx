@@ -19,6 +19,7 @@ import {
   mergeTranscriptOnRestart,
   resolveTranscriptStrategy,
 } from "../../lib/speech/transcript";
+import { isRecoverableSpeechError, speechErrorMessage, SPEECH_RESTART_DELAY_MS } from "../../lib/speech/errors";
 import { QuestionInputBar } from "../../components/questions/QuestionInputBar";
 
 type Message = {
@@ -49,6 +50,7 @@ export default function QuestionsPage() {
   const sendingRef = useRef(false);
   const [liveSpeech, setLiveSpeech] = useState("");
   const [micHolding, setMicHolding] = useState(false);
+  const [speechNotice, setSpeechNotice] = useState<string | null>(null);
   const [hasSpeechRecognition, setHasSpeechRecognition] = useState(false);
   const [hasSpeechSynthesis, setHasSpeechSynthesis] = useState(false);
   const {
@@ -478,6 +480,8 @@ export default function QuestionsPage() {
 
         pendingTranscriptRef.current = transcript;
 
+        setSpeechNotice(null);
+
         if (!transcript) return;
 
         if (liveSpeechRafRef.current != null) {
@@ -493,23 +497,47 @@ export default function QuestionsPage() {
         if (event.error === "aborted" || event.error === "no-speech") {
           return;
         }
-        clearPendingStopTimer();
-        console.error("Speech recognition error:", event.error);
+
+        const recoverable = isRecoverableSpeechError(event.error);
+
         techLog({
-          level: "error",
+          level: recoverable ? "warn" : "error",
           category: "speech",
           action: "recognition.error",
           message: event.error,
-          metadata: { message: event.message },
+          metadata: { message: event.message, recoverable },
         });
+
+        if (recoverable && micPressedRef.current) {
+          recognitionStartedRef.current = false;
+          setSpeechNotice("Проблема с сетью, повторяю…");
+          return;
+        }
+
+        clearPendingStopTimer();
         micSessionRef.current = false;
         recognitionStartedRef.current = false;
         stopRequestedRef.current = false;
+        micPressedRef.current = false;
         setMicHolding(false);
         setStatus("ready");
+        setSpeechNotice(speechErrorMessage(event.error));
+
         if (event.error === "not-allowed") {
-          alert("Разрешите доступ к микрофону в настройках браузера");
+          alert(speechErrorMessage("not-allowed"));
         }
+      };
+
+      const scheduleRecognitionRestart = () => {
+        window.setTimeout(() => {
+          if (!micPressedRef.current || stopRequestedRef.current) return;
+          if (!recognitionRef.current) return;
+          try {
+            recognitionRef.current.start();
+          } catch {
+            // ignore — следующий onend попробует снова
+          }
+        }, SPEECH_RESTART_DELAY_MS);
       };
 
       recognitionRef.current.onend = () => {
@@ -521,11 +549,7 @@ export default function QuestionsPage() {
           sessionBaseRef.current = pendingTranscriptRef.current;
           desktopAccumulatedRef.current = "";
           micRestartCountRef.current += 1;
-          try {
-            recognitionRef.current?.start();
-          } catch {
-            // ignore
-          }
+          scheduleRecognitionRestart();
           return;
         }
 
@@ -537,6 +561,7 @@ export default function QuestionsPage() {
         setMicHolding(false);
 
         if (shouldFinish) {
+          setSpeechNotice(null);
           finishMicSession(transcript);
           return;
         }
@@ -605,6 +630,7 @@ export default function QuestionsPage() {
     micSessionRef.current = true;
     micRestartCountRef.current = 0;
     setLiveSpeech("");
+    setSpeechNotice(null);
 
     try {
       recognitionRef.current.start();
@@ -735,6 +761,12 @@ export default function QuestionsPage() {
       {!hasSpeechRecognition && (
         <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
           Голосовой ввод недоступен в этом браузере. Используйте Chrome или Safari на телефоне.
+        </p>
+      )}
+
+      {speechNotice && (
+        <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          {speechNotice}
         </p>
       )}
 
